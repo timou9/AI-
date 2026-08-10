@@ -1,0 +1,6 @@
+{
+  "name": "AI 音乐分析与仿写工作站",
+  "description": "深度分析歌曲的和声、旋律、曲式与歌词特点，并一键仿写创作同风格全新原创歌曲。",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
