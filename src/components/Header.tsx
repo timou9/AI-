@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
-import { Music, Disc, BookOpen, Wand2, User, LogOut, Sparkles, ShieldCheck, Crown, MessageCircle, Copy, Check } from 'lucide-react';
+import { Music, Disc, BookOpen, Wand2, User, LogOut, Sparkles, ShieldCheck, Crown, MessageCircle, Copy, Check, FileText } from 'lucide-react';
 import { UserProfile } from '../types';
 
 interface HeaderProps {
-  activeTab: 'analyzer' | 'imitation' | 'presets';
-  setActiveTab: (tab: 'analyzer' | 'imitation' | 'presets') => void;
+  activeTab: 'analyzer' | 'imitation' | 'presets' | 'prd';
+  setActiveTab: (tab: 'analyzer' | 'imitation' | 'presets' | 'prd') => void;
   hasAnalysisData: boolean;
   currentUser: UserProfile | null;
   onOpenAuth: () => void;
@@ -88,6 +88,18 @@ export const Header: React.FC<HeaderProps> = ({
             {hasAnalysisData && activeTab !== 'imitation' && (
               <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping" />
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('prd')}
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center space-x-1.5 ${
+              activeTab === 'prd'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+            }`}
+          >
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <span>音乐家规范 (PRD)</span>
           </button>
         </nav>
 

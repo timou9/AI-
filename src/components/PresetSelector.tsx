@@ -1,14 +1,15 @@
 import React from 'react';
 import { PRESET_SONGS } from '../data/presets';
 import { PresetSong, SongAnalysisResult } from '../types';
-import { Sparkles, Play, Music2, Search, ArrowRight, Guitar } from 'lucide-react';
+import { Sparkles, Play, Music2, Search, ArrowRight, Guitar, FileText } from 'lucide-react';
 
 interface PresetSelectorProps {
   onSelectPreset: (preset: PresetSong) => void;
   onGoCustom: () => void;
+  onGoPRD?: () => void;
 }
 
-export const PresetSelector: React.FC<PresetSelectorProps> = ({ onSelectPreset, onGoCustom }) => {
+export const PresetSelector: React.FC<PresetSelectorProps> = ({ onSelectPreset, onGoCustom, onGoPRD }) => {
   return (
     <div className="space-y-8 py-4">
       {/* Banner Intro */}
@@ -17,7 +18,7 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({ onSelectPreset, 
         <div className="relative z-10 max-w-3xl space-y-4">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs font-medium">
             <Sparkles className="w-3.5 h-3.5" />
-            <span>专业音乐制作人 AI 辅助工具</span>
+            <span>国际华语音乐制作人 AI 辅助工具</span>
           </div>
           <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-100 tracking-tight leading-snug">
             解构金曲和声与律动 DNA，<br className="hidden sm:block" />
@@ -29,11 +30,21 @@ export const PresetSelector: React.FC<PresetSelectorProps> = ({ onSelectPreset, 
           <div className="pt-2 flex flex-wrap gap-3">
             <button
               onClick={onGoCustom}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-semibold text-sm transition-all shadow-lg shadow-amber-500/20 flex items-center space-x-2"
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-slate-950 font-semibold text-sm transition-all shadow-lg shadow-amber-500/20 flex items-center space-x-2 cursor-pointer"
             >
               <Search className="w-4 h-4" />
               <span>分析自定义歌曲或粘贴歌词</span>
             </button>
+
+            {onGoPRD && (
+              <button
+                onClick={onGoPRD}
+                className="px-5 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 font-semibold text-sm border border-slate-700 transition-all flex items-center space-x-2 cursor-pointer"
+              >
+                <FileText className="w-4 h-4 text-emerald-400" />
+                <span>查阅音乐家创作规范 (PRD)</span>
+              </button>
+            )}
           </div>
         </div>
       </div>

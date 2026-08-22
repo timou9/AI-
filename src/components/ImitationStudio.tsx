@@ -1,5 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
-import { SongAnalysisResult, ImitationSongBlueprint } from '../types';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import {
+  SongAnalysisResult,
+  ImitationSongBlueprint,
+  LyricComparisonData,
+  LyricSectionStructure,
+} from '../types';
 import { playChord, playChordProgression, stopChordProgression, playMelodyHook } from '../lib/audioSynth';
 import { downloadMidiFile } from '../lib/midiExporter';
 import {
@@ -34,173 +39,185 @@ import {
   Info,
   ListChecks,
   SlidersHorizontal,
+  X,
+  Plus,
+  ArrowRight,
+  ExternalLink,
+  Bot,
+  Users,
+  Eye,
+  AlignLeft,
+  VolumeX,
 } from 'lucide-react';
 
-const SUNO_STYLE_PRESETS = [
-  {
-    id: 'acoustic_folk',
-    name: '🎸 深情民谣/木吉他',
-    style: 'mandopop, acoustic folk, fingerstyle acoustic guitar, warm male vocal, 84 bpm, intimate, storytelling, organic',
-    vocal: 'Warm intimate male vocal with soft breathiness',
-    inst: 'Fingerstyle acoustic guitar, solo cello, soft upright piano',
-    negative: 'no auto-tune, no heavy drums, no EDM, no synth bass',
-  },
-  {
-    id: 'pop_ballad',
-    name: '🎹 抒情流行/大钢琴',
-    style: 'mandopop ballad, grand piano, orchestral strings, emotional female vocal, 78 bpm, bittersweet, dramatic chorus',
-    vocal: 'Ethereal emotional female vocal with powerful belt in chorus',
-    inst: 'Steinway grand piano, full string section, subtle ambient pad',
-    negative: 'no metal, no screaming, no trap beat, no autotune',
-  },
-  {
-    id: 'guofeng_oriental',
-    name: '🎻 古风国风/琴瑟弦乐',
-    style: 'guofeng mandopop, guzheng, dizi flute, erhu, cinematic orchestra, 88 bpm, poetic, elegant, dramatic',
-    vocal: 'Clear expressive vocal with traditional oriental falsetto ornamentation',
-    inst: 'Guzheng, Dizi bamboo flute, Erhu, cinematic percussion',
-    negative: 'no heavy distortion, no rap, no techno, no auto-tune',
-  },
-  {
-    id: 'jazz_rb',
-    name: '🎷 城市爵士/微醺R&B',
-    style: 'urban R&B, lo-fi jazz pop, fender rhodes, electric guitar, relaxed groove, 86 bpm, melancholic, smooth',
-    vocal: 'Smooth soulful R&B vocal, gentle runs and ad-libs',
-    inst: 'Fender Rhodes electric piano, muted trumpet, warm bass, lo-fi drum kit',
-    negative: 'no aggressive shouting, no heavy metal, no dubstep',
-  },
-  {
-    id: 'pop_rock',
-    name: '⚡ 流行摇滚/高亢飙音',
-    style: 'pop rock ballad, driving acoustic and electric guitar, dynamic drums, soaring male vocal, 96 bpm, passionate',
-    vocal: 'High-pitched raspy male vocal with soaring high notes',
-    inst: 'Acoustic rhythm guitar, overdrive electric lead guitar, rock drum kit',
-    negative: 'no auto-tune, no death metal, no electronic synth drop',
-  },
-];
+// Default reference lyrics structure sample
+const DEFAULT_REFERENCE_LYRICS = `[前奏]
+Dear old days
+Goodbye now
 
-const compileSunoMetatagLyrics = (bp: ImitationSongBlueprint | null, vocalStyle: string) => {
-  if (!bp || !bp.structuralBlueprint) return '';
-  let lyricText = `[Intro - ${bp.genreAndMood || 'Acoustic Intro'}]\n\n`;
+[主歌]
+抽屉里那张褪了色的旧相片
+记录着当时稚嫩的侧脸
+灰尘静静堆叠
+故事还没写完结
+笔尖停在昨天
+没寄出的那场告别
 
-  bp.structuralBlueprint.forEach((section) => {
-    const secName = section.sectionName;
-    const isChorus = secName.toLowerCase().includes('chorus') || secName.includes('副歌');
-    const isVerse = secName.toLowerCase().includes('verse') || secName.includes('主歌');
-    const isBridge = secName.toLowerCase().includes('bridge') || secName.includes('桥段');
-    const isOutro = secName.toLowerCase().includes('outro') || secName.includes('尾声');
+[导歌]
+Time to let it go
+那些反复纠结的 every single night
+终于在这一刻学会了 move on and smile
+遗憾不再是锁链
+像风吹过了指尖
+往事化成碎片
+散落在地平线
 
-    let sectionTag = `[${secName}]`;
-    if (isChorus) {
-      sectionTag = `[${secName} - High Energy, ${vocalStyle || 'Emotional Belt'}]`;
-    } else if (isVerse) {
-      sectionTag = `[${secName} - Soft Whispering, Gentle Acoustic]`;
-    } else if (isBridge) {
-      sectionTag = `[${secName} - Cello Buildup, Dynamic Rise]`;
-    } else if (isOutro) {
-      sectionTag = `[${secName} - Slow Fade Out, Soft Piano]`;
+[副歌]
+我们用尽全力 学会了释怀
+却在人海茫茫中 弄丢了依赖
+泪水凝结成了 微小的尘埃
+在时光深处 慢慢掩埋
+曾经以为永远 怎么被风吹散
+承诺在岁月中 变成了习惯
+现在的你 是否已经释然
+晚安 那些未能说出口的爱
+
+[桥段]
+如果时间能够倒流重来
+哪怕再次跌入深渊尘埃
+我依然会选择 奔向你的未来
+
+[尾声]
+Goodbye my yesterday
+终于学会释怀
+晚安`;
+
+// Helper: Calculate character/syllable count for Chinese or mixed English
+const countSyllables = (text: string): number => {
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+  // Match English words
+  const enWords = trimmed.match(/[a-zA-Z0-9']+/g) || [];
+  // Remove English words and spaces to count Chinese chars
+  const nonEn = trimmed.replace(/[a-zA-Z0-9'\s.,!?;:，。！？；：“”‘’]/g, '');
+  return nonEn.length + enWords.length;
+};
+
+// Client-side quick parser for lyrics structure
+const parseLyricsClientSide = (rawLyrics: string): LyricComparisonData => {
+  const lines = rawLyrics.split('\n');
+  const sections: LyricSectionStructure[] = [];
+  let currentSection: LyricSectionStructure | null = null;
+  let totalLineCount = 0;
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+
+    // Check if line is a section header like [前奏], [主歌], [Verse], etc.
+    const tagMatch = trimmed.match(/^\[(.*?)\]/);
+    if (tagMatch) {
+      if (currentSection && currentSection.lines.length > 0) {
+        currentSection.lineCount = currentSection.lines.length;
+        currentSection.summary = `共${currentSection.lines.length}句: ${currentSection.lines
+          .slice(0, 6)
+          .map((l) => `${l.lineIndex}句${l.syllableCount}字`)
+          .join(', ')}${currentSection.lines.length > 6 ? '...' : ''}`;
+        sections.push(currentSection);
+      }
+      const rawTag = tagMatch[1];
+      let standardName = rawTag;
+      if (rawTag.includes('前奏') || rawTag.toLowerCase().includes('intro')) standardName = '前奏';
+      else if (rawTag.includes('主歌') || rawTag.toLowerCase().includes('verse')) standardName = '主歌';
+      else if (rawTag.includes('导歌') || rawTag.toLowerCase().includes('pre')) standardName = '导歌';
+      else if (rawTag.includes('副歌') || rawTag.toLowerCase().includes('chorus')) standardName = '副歌';
+      else if (rawTag.includes('桥段') || rawTag.toLowerCase().includes('bridge')) standardName = '桥段';
+      else if (rawTag.includes('尾声') || rawTag.toLowerCase().includes('outro')) standardName = '尾声';
+
+      currentSection = {
+        sectionName: standardName,
+        tag: `[${rawTag}]`,
+        lineCount: 0,
+        lines: [],
+      };
+    } else {
+      if (!currentSection) {
+        currentSection = {
+          sectionName: '主歌',
+          tag: '[主歌]',
+          lineCount: 0,
+          lines: [],
+        };
+      }
+      const syl = countSyllables(trimmed);
+      totalLineCount++;
+      currentSection.lines.push({
+        lineIndex: currentSection.lines.length + 1,
+        text: trimmed,
+        syllableCount: syl,
+      });
     }
-
-    lyricText += `${sectionTag}\n`;
-    section.lines?.forEach((line) => {
-      lyricText += `${line.lineText}\n`;
-    });
-    lyricText += `\n`;
   });
 
-  return lyricText.trim();
+  if (currentSection && (currentSection as LyricSectionStructure).lines.length > 0) {
+    (currentSection as LyricSectionStructure).lineCount = (currentSection as LyricSectionStructure).lines.length;
+    (currentSection as LyricSectionStructure).summary = `共${(currentSection as LyricSectionStructure).lines.length}句: ${(currentSection as LyricSectionStructure).lines
+      .slice(0, 6)
+      .map((l) => `${l.lineIndex}句${l.syllableCount}字`)
+      .join(', ')}${(currentSection as LyricSectionStructure).lines.length > 6 ? '...' : ''}`;
+    sections.push(currentSection);
+  }
+
+  return {
+    totalSections: sections.length,
+    totalLines: totalLineCount,
+    formattedLyricsWithTags: rawLyrics,
+    sections,
+  };
 };
 
-const PAIRED_INSPIRATIONS = [
+// Helper: Generate Top Lyricist Master Prompt based on song DNA
+const buildLyricistSkillPrompt = (analysisData: SongAnalysisResult): string => {
+  const title = analysisData.songTitle || '目标对标歌曲';
+  const genre = analysisData.genre || '华语流行抒情';
+  const moods = analysisData.vibeMood?.join(' / ') || '伤感下沉 / 治愈释怀 / 怀旧回忆';
+  const metaphors = analysisData.lyricCrafting?.coreMetaphors?.join('、') || '旧照片、褪色车票、未接来电、行李箱';
+  const newTheme = analysisData.suggestedNewThemes?.[0] || '和过去的遗憾温柔告别，在时光深处学会释怀与前行';
+
+  return `请基于《${title}》（曲风: ${genre}，情绪: ${moods}）提取的音乐 DNA 与【顶级作词大师文学工程学（林夕/李宗盛/黄伟文/姚若龙级别）】创作一首全新的华语流行金曲：
+
+【1. 创作主题与受众定位】：围绕“${newTheme}”展开。叙事方式采用第一人称书信/深夜自省口吻，针对 25-40 岁男女听众在异乡奋斗、现实落差或情感体面告别中的内心隐痛，前 10 秒内迅速明确人物处境与矛盾冲突。
+【2. 反俗套与微观写实镜头】：主歌起笔严禁出现“街头、影子、黄昏、咖啡、路灯、眼泪、伤痛、孤独”等陈腐空泛词汇！必须从真实可触碰的生活物件与动作切入（如：${metaphors}、行李箱滚轮碾过石子路的声音、泛黄的铝饭盒、洗到脱线的旧工装、玄关忘了收起的旧雨伞、未曾按下的拨号键等）。
+【3. 副歌爆款金句哲学】：副歌前两句必须是朋友圈转发级、15-30秒短视频切片级的哲理金句（如“原来成长不是学会告别，而是学会和遗憾并肩”），好懂、好记、直击痛点，利于翻唱传播。
+【4. 十三辙与发声声学工程】：
+  - 主歌采用中闭口韵，配合【低位胸声+气声呢喃】；
+  - 导歌采用【中声区混声渡桥】；
+  - 副歌高音爆发区优先采用宽音开口韵母（如发花辙、江阳辙、人辰辙、怀来辙等），利于歌手声带闭合与【高位置平衡混声爆发】；
+  - 逐句标注声乐发声技巧与呼吸气口留白（主歌 7-11 字，副歌短促有力 4-9 字）。`;
+};
+
+const PROMPT_TEMPLATES = [
   {
-    theme: "毕业多年后在旧书店偶遇青春期暗恋的人",
-    mood: "由克制的遗憾转化为释怀的温柔"
+    name: '《顶级作词大师模式》· 林夕/李宗盛级微观叙事',
+    content:
+      '请遵循【顶级作词家文学工程学】，创作一首直击25-40岁群体的华语慢速抒情金曲。叙事采用第一人称书信自省口吻。主歌用微观物件（洗到脱线的旧工装、未寄出的信、深夜的泡面蒸汽）铺陈真实生活冲突，严禁使用“街头、影子、黄昏、咖啡”等空泛词汇。副歌前两句打造朋友圈转发级短视频黄金金句，发声规划严格遵循十三辙押韵与低位气声到高位置平衡混声爆发。',
   },
   {
-    theme: "深夜独自坐在老餐馆里吃一碗热面，想起远方的故乡",
-    mood: "怀旧温暖，伴随淡淡的怅然若失与岁月静好"
+    name: '《我们终究是错过》· 25-40人群 / 伤感下沉',
+    content:
+      '请围绕“和过去的遗憾温柔告别”创作一首完整歌曲。叙事方式采用第一人称书信口吻，针对25-40岁男女性听众。先明确人物处境、关系变化或内心冲突，再推动情绪从遗憾、反复想起走向平静放下。表达口吻保持温柔、克制、适合慢歌。主歌用具体场景和生活微观细节铺陈故事，严禁出现“街头、影子、黄昏、咖啡”等空泛词汇。副歌围绕核心哲理金句自然展开，整体主题集中、情绪统一、利于翻唱传播。',
   },
   {
-    theme: "收拾旧物件时翻出十年前未寄出的明信片",
-    mood: "主歌压抑克制，副歌情感爆发宣泄，后段回归深情余音"
+    name: '《晚风里的第三封信》· 七夕/秋季节点 · 治愈释怀',
+    content:
+      '创作一首适合七夕或秋季节点发行的慢速抒情华语金曲。以“收拾旧抽屉发现未寄出的信”为微观镜头切入，情绪由克制感伤到副歌的勇敢释怀。配器以大钢琴和指弹木吉他为主，发声规划包含低位气声呢喃到副歌平衡混声爆发。',
   },
   {
-    theme: "异地恋最后一次在机场拥抱并各自奔赴前程",
-    mood: "深情告白与放手祝福交织的复杂微妙心境"
+    name: '《在人海与你擦肩》· 都会流行 · 6415卡农和声',
+    content:
+      '以都会现代冷色调为基底，采用 6415 经典流行和弦走向。刻画都市男女在写字楼与地铁人海中的情感抉择，副歌包含抓耳的短视频金句 Hook，适合 15 秒黄金传播。',
   },
-  {
-    theme: "下雨天站在天桥上看熙熙攘攘的车流，内心重归平静",
-    mood: "如清晨微风般治愈而平静的成长感悟"
-  },
-  {
-    theme: "和多年老友在街头烧烤摊喝啤酒谈论未完成的梦想",
-    mood: "微醺感伤中带着对未来的笃定与希望"
-  },
-  {
-    theme: "独自在海边听浪花拍岸，告别一段无疾而终的感情",
-    mood: "从自嘲孤单与迷茫，到勇敢拥抱真实的自己"
-  },
-  {
-    theme: "搭乘末班地铁环线，看窗外倒退的城市夜景与灯火",
-    mood: "空灵梦幻，仿佛置身于星空与大海交界处的沉浸感"
-  },
-  {
-    theme: "告别打拼多年的大城市，在列车启动那一刻的释怀",
-    mood: "热血燃向，从绝望低谷到破茧重生的极速飙升"
-  },
-  {
-    theme: "在异国他乡的咖啡馆里突然听到熟悉的母语老歌",
-    mood: "轻快俏皮，带着一丝对微小幸福的满足感"
-  }
 ];
-
-// Dynamic generator for song-derived story themes
-const getSongDerivedThemes = (analysis: SongAnalysisResult) => {
-  const themesSet = new Set<string>();
-
-  // 1. Suggested themes from song analysis
-  if (analysis.suggestedNewThemes && analysis.suggestedNewThemes.length > 0) {
-    analysis.suggestedNewThemes.forEach((t) => themesSet.add(t));
-  }
-
-  // 2. Theme derived from lyricCrafting summary
-  if (analysis.lyricCrafting?.themeSummary) {
-    themesSet.add(`延续《${analysis.songTitle}》感人情绪: ${analysis.lyricCrafting.themeSummary}`);
-  }
-
-  // 3. Theme derived from core metaphors
-  if (analysis.lyricCrafting?.coreMetaphors && analysis.lyricCrafting.coreMetaphors.length > 0) {
-    themesSet.add(`以“${analysis.lyricCrafting.coreMetaphors.slice(0, 2).join(' / ')}”为核心意象的都市物语`);
-  }
-
-  // 4. Paired curated themes
-  PAIRED_INSPIRATIONS.forEach((p) => themesSet.add(p.theme));
-
-  return Array.from(themesSet);
-};
-
-// Dynamic generator for song-derived emotional logic & mood
-const getSongDerivedMoods = (analysis: SongAnalysisResult) => {
-  const moodsSet = new Set<string>();
-
-  // 1. Vibe moods from song analysis
-  if (analysis.vibeMood && analysis.vibeMood.length > 0) {
-    moodsSet.add(analysis.vibeMood.join(' / '));
-    analysis.vibeMood.forEach((m) => moodsSet.add(m));
-  }
-
-  // 2. Emotional effects from chord progressions
-  if (analysis.chordProgressions) {
-    analysis.chordProgressions.forEach((cp) => {
-      if (cp.emotionalEffect) moodsSet.add(cp.emotionalEffect);
-    });
-  }
-
-  // 3. Paired curated moods
-  PAIRED_INSPIRATIONS.forEach((p) => moodsSet.add(p.mood));
-
-  return Array.from(moodsSet);
-};
 
 interface ImitationStudioProps {
   analysis: SongAnalysisResult;
@@ -215,17 +232,46 @@ export const ImitationStudio: React.FC<ImitationStudioProps> = ({
   blueprint,
   isGenerating,
 }) => {
-  // Customization Form States
-  const [imitationLevel, setImitationLevel] = useState<'light' | 'medium' | 'exact'>('medium');
-  const [newTitle, setNewTitle] = useState('');
-  const [newThemeTopic, setNewThemeTopic] = useState(analysis.suggestedNewThemes?.[0] || '');
-  const [targetMood, setTargetMood] = useState(analysis.vibeMood?.join(', ') || '感动 / 怀旧');
-  const [desiredKey, setDesiredKey] = useState(analysis.musicalKey || 'G Major');
-  const [tempoAdjustment, setTempoAdjustment] = useState(analysis.tempoBpm || 84);
-  const [language, setLanguage] = useState('中文');
+  // Studio Mode: '3column' (Master Creation Studio) vs 'leadsheet' (Interactive Chords & Synth)
+  const [studioView, setStudioView] = useState<'3column' | 'leadsheet'>('3column');
 
-  // Copy & Audio States
+  // Column 1: DNA Source State
+  const [isPlayingReferenceAudio, setIsPlayingReferenceAudio] = useState(false);
+  const [referenceAudioTime, setReferenceAudioTime] = useState('0:00 / 3:02');
+  const [customDnaBpm, setCustomDnaBpm] = useState(analysis.tempoBpm || 84);
+  const [customDnaKey, setCustomDnaKey] = useState(analysis.musicalKey || 'G Major');
+  const [isDnaSaved, setIsDnaSaved] = useState(false);
+
+  // Column 2: Creation Engine State
+  const [creationMode, setCreationMode] = useState<'theme' | 'existing_lyrics'>('theme');
+  const [isInstrumentalOnly, setIsInstrumentalOnly] = useState(false);
+  const [creationPromptText, setCreationPromptText] = useState(PROMPT_TEMPLATES[0].content);
+  const [imitationIntensity, setImitationIntensity] = useState<'light' | 'medium' | 'exact'>('exact');
+  const [newSongTitle, setNewSongTitle] = useState('我们终究是错过');
+
+  // Lyric Structure Alignment State
+  const [refLyricsText, setRefLyricsText] = useState(DEFAULT_REFERENCE_LYRICS);
+  const [isParsingStructure, setIsParsingStructure] = useState(false);
+  const [parsedStructureData, setParsedStructureData] = useState<LyricComparisonData>(() =>
+    parseLyricsClientSide(DEFAULT_REFERENCE_LYRICS)
+  );
+
+  // Column 2 Bottom: Suno Prompt State
+  const [sunoStylePrompt, setSunoStylePrompt] = useState(
+    'mandopop ballad, grand piano, fingerstyle acoustic guitar, solo cello, warm intimate male vocal, 84 bpm, emotional, bittersweet, cinematic'
+  );
+  const [sunoNegativePrompt, setSunoNegativePrompt] = useState(
+    'no auto-tune, no heavy rock, no EDM drop, no shouting, no harsh synth'
+  );
+  const [sunoWeight, setSunoWeight] = useState(85);
+  const [sunoRandomness, setSunoRandomness] = useState(25);
+  const [sunoVocalType, setSunoVocalType] = useState('Clear youth female solo, airy intimate delivery');
+
+  // Copy & Notice States
   const [copiedType, setCopiedType] = useState<string | null>(null);
+  const [showSunoModal, setShowSunoModal] = useState(false);
+
+  // Lead Sheet / Audio Hook Synth States
   const [isPlayingHook, setIsPlayingHook] = useState(false);
   const [activeNoteIdx, setActiveNoteIdx] = useState<number | null>(null);
   const [playingChordSection, setPlayingChordSection] = useState<number | null>(null);
@@ -236,65 +282,97 @@ export const ImitationStudio: React.FC<ImitationStudioProps> = ({
   const [isPolishing, setIsPolishing] = useState(false);
   const [showPolishModal, setShowPolishModal] = useState(false);
 
-  // Suno AI Fine-Tuning & Anti-Drift Control Panel States
-  const [sunoStylePrompt, setSunoStylePrompt] = useState('');
-  const [sunoWeight, setSunoWeight] = useState(85);
-  const [sunoRandomness, setSunoRandomness] = useState(25);
-  const [sunoNegativePrompt, setSunoNegativePrompt] = useState('no auto-tune, no heavy rock, no EDM drop, no shouting, no harsh synth');
-  const [sunoVocalType, setSunoVocalType] = useState('Warm intimate male vocal');
-  const [sunoInstrumentation, setSunoInstrumentation] = useState('Fingerstyle acoustic guitar, grand piano, solo cello');
-  const [activeSunoPreset, setActiveSunoPreset] = useState<string | null>(null);
-  const [showMetatagsLyricView, setShowMetatagsLyricView] = useState(false);
+  // Sync state automatically when analysis (DNA source) changes
+  useEffect(() => {
+    if (analysis) {
+      if (analysis.tempoBpm) setCustomDnaBpm(analysis.tempoBpm);
+      if (analysis.musicalKey) setCustomDnaKey(analysis.musicalKey);
+      
+      // Auto-populate Top Lyricist Master Prompt
+      const dynamicPrompt = buildLyricistSkillPrompt(analysis);
+      setCreationPromptText(dynamicPrompt);
 
-  // Sync Suno parameters when blueprint updates
+      // Auto-populate new song title
+      if (analysis.suggestedNewThemes?.[0]) {
+        const cleaned = analysis.suggestedNewThemes[0].split(/[，,:：]/)[0].trim();
+        setNewSongTitle(cleaned.length > 1 ? cleaned : `新歌·${analysis.songTitle}`);
+      } else if (analysis.songTitle) {
+        setNewSongTitle(`新歌·${analysis.songTitle}`);
+      }
+
+      // Auto-populate Suno style prompt from extracted DNA
+      const instruments = analysis.arrangementInstruments?.slice(0, 4).join(', ') || 'grand piano, acoustic guitar, cello';
+      const genre = analysis.genre?.toLowerCase() || 'mandopop ballad';
+      const bpm = analysis.tempoBpm || 84;
+      const key = analysis.musicalKey || 'G Major';
+      setSunoStylePrompt(`${genre}, ${instruments}, warm intimate male/female vocal, ${bpm} bpm, ${key}, emotional, bittersweet, cinematic`);
+    }
+  }, [analysis.songTitle, analysis.genre, analysis.tempoBpm, analysis.musicalKey]);
+
+  // Sync blueprint data when generated
   useEffect(() => {
     if (blueprint) {
+      if (blueprint.title) setNewSongTitle(blueprint.title);
       const params = blueprint.aiMusicPrompt?.sunoParameters;
-      setSunoStylePrompt(params?.styleTags || blueprint.aiMusicPrompt?.sunoPrompt || 'mandopop, acoustic guitar, soft piano, warm male vocal, 84 bpm, emotional');
-      setSunoWeight(params?.styleGuidanceWeight || 85);
-      setSunoRandomness(params?.creativityRandomness || 25);
-      setSunoNegativePrompt(params?.negativePrompt || 'no auto-tune, no heavy rock, no EDM drop, no shouting, no harsh synth');
-      setSunoVocalType(params?.vocalSettings || 'Warm intimate male vocal, gentle breathiness');
-      setSunoInstrumentation(params?.instrumentation || 'Fingerstyle acoustic guitar, grand piano, solo cello');
-      setActiveSunoPreset(null);
+      if (params?.styleTags || blueprint.aiMusicPrompt?.sunoPrompt) {
+        setSunoStylePrompt(params?.styleTags || blueprint.aiMusicPrompt?.sunoPrompt || sunoStylePrompt);
+      }
+      if (params?.vocalSettings) {
+        setSunoVocalType(params.vocalSettings);
+      }
+      if (params?.negativePrompt) {
+        setSunoNegativePrompt(params.negativePrompt);
+      }
     }
   }, [blueprint]);
 
-  // Memoized Song-Derived Inspiration Pools
-  const songDerivedThemes = useMemo(() => getSongDerivedThemes(analysis), [analysis]);
-  const songDerivedMoods = useMemo(() => getSongDerivedMoods(analysis), [analysis]);
-
-  // Randomize Story Theme & Mood Logic Handlers
-  const handleRandomizeTheme = () => {
-    const filtered = songDerivedThemes.filter((item) => item !== newThemeTopic);
-    const selected = filtered[Math.floor(Math.random() * filtered.length)] || songDerivedThemes[0];
-    if (selected) setNewThemeTopic(selected);
+  // Recalculate parsed structure whenever refLyricsText changes
+  const handleLyricsChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const text = e.target.value;
+    setRefLyricsText(text);
+    setParsedStructureData(parseLyricsClientSide(text));
   };
 
-  const handleRandomizeMood = () => {
-    const filtered = songDerivedMoods.filter((item) => item !== targetMood);
-    const selected = filtered[Math.floor(Math.random() * filtered.length)] || songDerivedMoods[0];
-    if (selected) setTargetMood(selected);
+  // AI Auto-Tag Structure
+  const handleAiAutoStructure = async () => {
+    setIsParsingStructure(true);
+    try {
+      const res = await fetch('/api/parse-lyric-structure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawLyrics: refLyricsText,
+          targetSongTitle: analysis.songTitle,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data) {
+          setParsedStructureData(data.data);
+          if (data.data.formattedLyricsWithTags) {
+            setRefLyricsText(data.data.formattedLyricsWithTags);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error auto-structuring lyrics:', err);
+    } finally {
+      setIsParsingStructure(false);
+    }
   };
 
-  const handleRandomizeAllStoryAndMood = () => {
-    // Pick a paired inspiration
-    const pairIndex = Math.floor(Math.random() * PAIRED_INSPIRATIONS.length);
-    const selectedPair = PAIRED_INSPIRATIONS[pairIndex];
-    setNewThemeTopic(selectedPair.theme);
-    setTargetMood(selectedPair.mood);
-  };
-
-  const handleCustomSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  // Master Submission Trigger
+  const handleLaunchEngine = () => {
     onGenerateBlueprint({
-      imitationLevel,
-      newTitle,
-      newThemeTopic,
-      targetMood,
-      desiredKey,
-      tempoAdjustment,
-      language,
+      imitationLevel: imitationIntensity,
+      newTitle: newSongTitle,
+      newThemeTopic: creationPromptText,
+      targetMood: '伤感下沉 / 释怀治愈 / 留存率与金句对标',
+      desiredKey: customDnaKey,
+      tempoAdjustment: customDnaBpm,
+      language: '中文',
+      referenceLyricsStructure: parsedStructureData,
+      isInstrumentalOnly,
     });
   };
 
@@ -317,7 +395,7 @@ export const ImitationStudio: React.FC<ImitationStudioProps> = ({
     setIsPlayingHook(true);
     playMelodyHook(
       blueprint.melodyHookNotes,
-      tempoAdjustment,
+      customDnaBpm,
       (idx) => setActiveNoteIdx(idx),
       () => {
         setIsPlayingHook(false);
@@ -334,1056 +412,1030 @@ export const ImitationStudio: React.FC<ImitationStudioProps> = ({
     }
 
     setPlayingChordSection(secIdx);
-    playChordProgression(
-      chords,
-      tempoAdjustment,
-      undefined,
-      () => setPlayingChordSection(null)
-    );
-  };
-
-  const handleOpenPolishModal = (lineText: string) => {
-    setPolishLine(lineText);
-    setPolishOptions([]);
-    setShowPolishModal(true);
-  };
-
-  const handleRequestPolish = async () => {
-    if (!polishLine.trim()) return;
-    setIsPolishing(true);
-    try {
-      const res = await fetch('/api/rhyme-helper', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ line: polishLine, targetRhyme: '流畅压韵', style: targetMood }),
-      });
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      setPolishOptions(data.options || []);
-    } catch (e) {
-      console.error('Polish error:', e);
-    } finally {
-      setIsPolishing(false);
-    }
+    playChordProgression(chords, customDnaBpm, undefined, () => setPlayingChordSection(null));
   };
 
   const handleExportMidi = () => {
     if (!blueprint) return;
-    downloadMidiFile(blueprint, tempoAdjustment);
+    downloadMidiFile(blueprint, customDnaBpm);
   };
 
-  // Format full lead sheet text for export
-  const generateExportText = () => {
-    if (!blueprint) return '';
-    let text = `# 《${blueprint.title}》\n`;
-    text += `副标题: ${blueprint.subtitle}\n`;
-    text += `致敬参考: 《${analysis.songTitle}》 - ${analysis.artist}\n`;
-    text += `调性/速度: ${blueprint.tempoAndKey}\n`;
-    text += `风格氛围: ${blueprint.genreAndMood}\n\n`;
-    text += `--------------------------------------\n\n`;
-
-    blueprint.structuralBlueprint?.forEach((sec) => {
-      text += `[${sec.sectionName}] (和弦: ${sec.chordsUsed?.join(' - ')})\n`;
-      sec.lines?.forEach((line) => {
-        text += `${line.chords}\n`;
-        text += `${line.lineText}\n\n`;
+  // Compile formatted Suno prompt suite
+  const compileFullSunoSuite = () => {
+    let lyricsBody = '';
+    if (blueprint?.structuralBlueprint) {
+      blueprint.structuralBlueprint.forEach((sec) => {
+        lyricsBody += `[${sec.sectionName} - ${sec.vocalPlacement || 'Emotional Belt'}]\n`;
+        sec.lines?.forEach((l) => {
+          lyricsBody += `${l.lineText}\n`;
+        });
+        lyricsBody += '\n';
       });
-    });
+    } else {
+      lyricsBody = refLyricsText;
+    }
 
-    text += `--------------------------------------\n`;
-    text += `【Suno AI 提示词】:\n${blueprint.aiMusicPrompt?.sunoPrompt}\n`;
-    return text;
+    return `[Suno AI Custom Mode 黄金配方]\n\n【Title】: ${newSongTitle || blueprint?.title || '我们终究是错过'}\n\n【Style of Music】:\n${sunoStylePrompt}\n\n【Style Weight】: ${sunoWeight}%\n【Randomness】: ${sunoRandomness}%\n【Exclude Styles】:\n${sunoNegativePrompt}\n\n【Lyrics with Metatags】:\n${lyricsBody.trim()}`;
   };
 
   return (
-    <div className="space-y-8 animate-fadeIn">
-      {/* 1. Customization Panel */}
-      <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 sm:p-8 space-y-6 shadow-xl">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-4 gap-2">
+    <div className="space-y-6 animate-fadeIn">
+      {/* Top Workflow Tabs Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-900 border border-slate-800 p-4 rounded-2xl gap-4 shadow-xl">
+        <div className="flex items-center space-x-3">
+          <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20">
+            <Zap className="w-5 h-5 text-amber-400" />
+          </div>
           <div>
-            <h2 className="text-xl font-bold text-slate-100 flex items-center space-x-2">
-              <Wand2 className="w-5 h-5 text-amber-400" />
-              <span>AI 仿写定制参数 (Songwriting Customization)</span>
+            <h2 className="text-base font-bold text-slate-100 flex items-center space-x-2">
+              <span>国际金曲 3-栏商业创作台 (Master Imitation Studio)</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">
+                PRD v3.0 对齐
+              </span>
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              基于原曲《{analysis.songTitle}》的和声走向与律动模版，打造全新主题与歌词
+            <p className="text-xs text-slate-400">
+              基于原曲《{analysis.songTitle}》DNA 提取、歌词曲式字数对标与 Suno 提示词方案
             </p>
           </div>
         </div>
 
-        <form onSubmit={handleCustomSubmit} className="space-y-6">
-          {/* Block 1: Imitation Intensity Level Selection */}
-          <div className="space-y-2.5">
-            <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-slate-300 flex items-center space-x-1.5">
-                <Sliders className="w-4 h-4 text-amber-400" />
-                <span>仿写强度级别 (Imitation Intensity Level)</span>
-              </label>
-              <span className="text-[11px] text-amber-400 font-normal">选择 AI 继承原曲乐理基因的比重</span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 items-stretch">
-              {/* Light */}
-              <button
-                type="button"
-                onClick={() => setImitationLevel('light')}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                  imitationLevel === 'light'
-                    ? 'bg-amber-500/10 border-amber-500 text-amber-200 ring-1 ring-amber-500/50 shadow-lg shadow-amber-500/10'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm flex items-center space-x-1.5">
-                    <Sparkles className="w-4 h-4 text-sky-400" />
-                    <span>轻度仿写</span>
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 font-mono">
-                    20-30% 基因
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  提炼原曲情绪与氛围色彩，自由拓展全新和理走向与独立构思
-                </p>
-              </button>
-
-              {/* Medium */}
-              <button
-                type="button"
-                onClick={() => setImitationLevel('medium')}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between relative ${
-                  imitationLevel === 'medium'
-                    ? 'bg-amber-500/10 border-amber-500 text-amber-200 ring-1 ring-amber-500/50 shadow-lg shadow-amber-500/10'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm flex items-center space-x-1.5">
-                    <Sliders className="w-4 h-4 text-amber-400" />
-                    <span>中度仿写</span>
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono font-bold">
-                    推荐 · 50-70%
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  严格继承核心和声框架与段落布局，均衡经典神韵与全新原创
-                </p>
-              </button>
-
-              {/* 1:1 Exact */}
-              <button
-                type="button"
-                onClick={() => setImitationLevel('exact')}
-                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                  imitationLevel === 'exact'
-                    ? 'bg-rose-500/10 border-rose-500 text-rose-200 ring-1 ring-rose-500/50 shadow-lg shadow-rose-500/10'
-                    : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-300'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-bold text-sm flex items-center space-x-1.5">
-                    <Layers className="w-4 h-4 text-rose-400" />
-                    <span>1:1 还原 (极致复刻)</span>
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-mono font-bold">
-                    100% 模版对齐
-                  </span>
-                </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  1:1 精确复刻小节数、和弦级数与字数押韵节奏，完美无缝模版替换
-                </p>
-              </button>
-            </div>
-          </div>
-
-          {/* Block 2: Meta Settings (Title, Key & BPM) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
-            {/* Field 1: New Song Title */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                新歌名称 (留空则由 AI 自动生成)
-              </label>
-              <input
-                type="text"
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="例如：晚风里的第三封信"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-100 placeholder-slate-600 text-sm focus:outline-none focus:ring-1 focus:ring-amber-500"
-              />
-            </div>
-
-            {/* Field 2: Target Key & Tempo */}
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                目标调性 (Key) & BPM 速度
-              </label>
-              <div className="flex space-x-2">
-                <input
-                  type="text"
-                  value={desiredKey}
-                  onChange={(e) => setDesiredKey(e.target.value)}
-                  placeholder="调性 (如 G Major)"
-                  className="w-1/2 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
-                />
-                <input
-                  type="number"
-                  value={tempoAdjustment}
-                  onChange={(e) => setTempoAdjustment(Number(e.target.value))}
-                  placeholder="BPM (如 84)"
-                  className="w-1/2 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 font-mono text-sm focus:border-amber-500 focus:outline-none"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Block 3: Story Theme & Emotional Logic (Spans full width) */}
-          <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-5 space-y-4 shadow-lg">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800/80 pb-3 gap-2">
-              <div className="flex items-center space-x-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <div>
-                  <span className="text-sm font-bold text-slate-100">
-                    仿写故事主题 & 情感逻辑 (Story Theme & Emotional Logic)
-                  </span>
-                  <p className="text-[11px] text-slate-400">
-                    基于原歌《{analysis.songTitle}》乐理与词作解构提供丰富灵感，点击下方推荐标签快速替换或点击一键随机
-                  </p>
-                </div>
-              </div>
-
-              {/* Master Combined Randomizer Button */}
-              <button
-                type="button"
-                onClick={handleRandomizeAllStoryAndMood}
-                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 via-rose-500/20 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer shrink-0 shadow-md"
-                title="一键随机更换仿写故事主题与情感起伏逻辑"
-              >
-                <Dices className="w-4 h-4 text-amber-400 animate-bounce" />
-                <span>🎲 随机全部更换 (主题+情感)</span>
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-              {/* Field 1: Story Theme Topic */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-semibold text-slate-300">
-                    仿写故事主题 (Story Theme)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleRandomizeTheme}
-                    className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center space-x-1 px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/20 transition-all cursor-pointer"
-                    title="仅随机换故事主题"
-                  >
-                    <Shuffle className="w-3 h-3" />
-                    <span>单项微调</span>
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  value={newThemeTopic}
-                  onChange={(e) => setNewThemeTopic(e.target.value)}
-                  placeholder="例如：毕业多年后在旧书店偶遇青春期暗恋的人"
-                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 focus:border-amber-500 text-slate-100 placeholder-slate-600 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-
-                {/* Quick Select Chips for Story Themes */}
-                <div className="space-y-1.5 pt-1">
-                  <span className="text-[11px] text-slate-400 font-medium block">
-                    💡 原歌衍生灵感 & 推荐主题 (点击直接套用):
-                  </span>
-                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1 custom-scrollbar">
-                    {songDerivedThemes.map((themeItem, idx) => {
-                      const isSelected = newThemeTopic === themeItem;
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setNewThemeTopic(themeItem)}
-                          className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all text-left cursor-pointer ${
-                            isSelected
-                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 font-semibold'
-                              : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
-                          }`}
-                        >
-                          {themeItem}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Field 2: Emotional Logic & Mood */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-xs font-semibold text-slate-300">
-                    情感逻辑 & 目标氛围 (Emotional Logic & Mood)
-                  </label>
-                  <button
-                    type="button"
-                    onClick={handleRandomizeMood}
-                    className="text-[11px] text-indigo-400 hover:text-indigo-300 flex items-center space-x-1 px-2 py-0.5 rounded bg-indigo-500/10 border border-indigo-500/20 transition-all cursor-pointer"
-                    title="仅随机换情感逻辑"
-                  >
-                    <Shuffle className="w-3 h-3" />
-                    <span>单项微调</span>
-                  </button>
-                </div>
-                <input
-                  type="text"
-                  value={targetMood}
-                  onChange={(e) => setTargetMood(e.target.value)}
-                  placeholder="例如：由克制的遗憾转化为释怀的温柔"
-                  className="w-full px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-800 focus:border-amber-500 text-slate-100 placeholder-slate-600 text-xs focus:outline-none focus:ring-1 focus:ring-amber-500"
-                />
-
-                {/* Quick Select Chips for Mood Logics */}
-                <div className="space-y-1.5 pt-1">
-                  <span className="text-[11px] text-slate-400 font-medium block">
-                    🎭 原曲起伏逻辑 & 目标氛围 (点击直接套用):
-                  </span>
-                  <div className="flex flex-wrap gap-1.5 max-h-36 overflow-y-auto pr-1 custom-scrollbar">
-                    {songDerivedMoods.map((moodItem, idx) => {
-                      const isSelected = targetMood === moodItem;
-                      return (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setTargetMood(moodItem)}
-                          className={`text-[11px] px-2.5 py-1 rounded-lg border transition-all text-left cursor-pointer ${
-                            isSelected
-                              ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/60 font-semibold'
-                              : 'bg-slate-900/80 text-slate-400 border-slate-800 hover:border-slate-700 hover:text-slate-200'
-                          }`}
-                        >
-                          {moodItem}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
+        {/* View Switcher: 3-Column Creation vs Lead Sheet & MIDI */}
+        <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
           <button
-            type="submit"
-            disabled={isGenerating}
-            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-slate-950 font-bold text-sm transition-all shadow-xl shadow-amber-500/20 flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
+            type="button"
+            onClick={() => setStudioView('3column')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer ${
+              studioView === '3column'
+                ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
           >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-5 h-5 animate-spin" />
-                <span>AI 作词家兼编曲师正在按【{imitationLevel === 'exact' ? '1:1 还原' : imitationLevel === 'light' ? '轻度仿写' : '中度仿写'}】标准谱写歌曲...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-5 h-5" />
-                <span>生成【{imitationLevel === 'exact' ? '1:1 还原极致复刻' : imitationLevel === 'light' ? '轻度灵感仿写' : '中度平衡仿写'}】全新原创 Blueprint</span>
-              </>
-            )}
+            <Layers className="w-3.5 h-3.5" />
+            <span>3-栏全流程创作台</span>
           </button>
-        </form>
+          <button
+            type="button"
+            onClick={() => setStudioView('leadsheet')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer ${
+              studioView === 'leadsheet'
+                ? 'bg-amber-500 text-slate-950 shadow-md font-bold'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Music className="w-3.5 h-3.5" />
+            <span>互动总谱 & MIDI 试听</span>
+          </button>
+        </div>
       </div>
 
-      {/* 2. Generated Song Blueprint Display */}
-      {blueprint && (
-        <div className="space-y-8 animate-fadeIn">
-          {/* Blueprint Hero Badge */}
-          <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-slate-950 to-slate-900 border border-amber-500/40 p-6 sm:p-8 shadow-2xl space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
-              <div>
+      {/* VIEW 1: 3-COLUMN CREATION STUDIO (Matching User Image) */}
+      {studioView === '3column' && (
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+          {/* ========================================================= */}
+          {/* COLUMN 1: 01 DNA 提取源 (可选) (3 Columns on XL) */}
+          {/* ========================================================= */}
+          <div className="xl:col-span-3 space-y-4">
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-5 shadow-xl">
+              {/* Header Step Badge */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
                 <div className="flex items-center space-x-2">
-                  <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold">
-                    ✨ AI 仿写生成完成
+                  <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold text-xs flex items-center justify-center border border-amber-500/30">
+                    01
                   </span>
-                  <span className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 text-xs font-semibold">
-                    级别: {blueprint.imitationLevel || (imitationLevel === 'exact' ? '1:1 还原 (极致复刻)' : imitationLevel === 'light' ? '轻度仿写' : '中度仿写')}
-                  </span>
+                  <span className="font-bold text-sm text-slate-100">DNA 提取源 (可选)</span>
                 </div>
-                <h1 className="text-3xl font-black text-amber-300 mt-2">
-                  《{blueprint.title}》
-                </h1>
-                <p className="text-sm text-slate-300 italic mt-0.5">{blueprint.subtitle}</p>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={handleExportMidi}
-                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs transition-all shadow-lg shadow-amber-500/20 flex items-center space-x-1.5 cursor-pointer"
-                  title="将旋律 Hook 与全曲和弦编曲导出为 standard .MID 文件，可直接导入 Logic, Ableton, FL Studio 等 DAW 中"
-                >
-                  <Download className="w-4 h-4 stroke-[2.5]" />
-                  <span>导出为 MIDI 文件 (.mid)</span>
-                </button>
-                <button
-                  onClick={() => handleCopyText(generateExportText(), 'leadSheet')}
-                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition-all flex items-center space-x-1.5 cursor-pointer"
-                >
-                  {copiedType === 'leadSheet' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>复制完整和弦歌词总谱</span>
-                </button>
-              </div>
-            </div>
+              {/* Reference Audio Player Bar */}
+              <div className="bg-slate-950 p-3.5 rounded-xl border border-slate-800/90 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-slate-200 truncate">
+                      {analysis.artist} - {analysis.songTitle}
+                    </div>
+                    <div className="text-[10px] text-slate-500">参考标杆参考音源</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsPlayingReferenceAudio(!isPlayingReferenceAudio)}
+                    className="p-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 transition-all cursor-pointer shadow-md"
+                    title={isPlayingReferenceAudio ? '暂停播放' : '试听原曲'}
+                  >
+                    {isPlayingReferenceAudio ? <Square className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current ml-0.5" />}
+                  </button>
+                </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-slate-300">
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                <span className="text-slate-500 block">继承音乐基因:</span>
-                <span className="font-semibold text-slate-200">{blueprint.originalInspiration}</span>
+                {/* Soundwave Simulation Bar */}
+                <div className="flex items-center space-x-1 h-4 bg-slate-900 px-2 rounded-md border border-slate-800">
+                  <div className="text-[10px] font-mono text-slate-400 mr-1">{referenceAudioTime}</div>
+                  <div className="flex-1 flex items-center justify-center space-x-0.5">
+                    {[40, 70, 30, 90, 60, 80, 50, 95, 45, 65, 85, 35, 75, 55, 90, 60].map((h, i) => (
+                      <span
+                        key={i}
+                        className={`w-1 rounded-full transition-all ${
+                          isPlayingReferenceAudio ? 'bg-amber-400 animate-pulse' : 'bg-slate-700'
+                        }`}
+                        style={{ height: `${h}%` }}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                <span className="text-slate-500 block">调性与速度:</span>
-                <span className="font-mono font-bold text-amber-400">{blueprint.tempoAndKey}</span>
-              </div>
-              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                <span className="text-slate-500 block">曲风与情绪:</span>
-                <span className="font-semibold text-indigo-300">{blueprint.genreAndMood}</span>
+
+              {/* DNA Tags & Action */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-xs font-bold text-slate-200">已提取 DNA</span>
+                    <span className="text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                      TIP: 点击 DNA 标签，可自由选择对标
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDnaSaved(true);
+                      setTimeout(() => setIsDnaSaved(false), 2000);
+                    }}
+                    className="text-[10px] text-indigo-400 hover:text-indigo-300 font-semibold flex items-center space-x-1 cursor-pointer"
+                  >
+                    {isDnaSaved ? <Check className="w-3 h-3 text-emerald-400" /> : <Edit3 className="w-3 h-3" />}
+                    <span>{isDnaSaved ? '已保存修改' : '保存 DNA 修改'}</span>
+                  </button>
+                </div>
+
+                {/* Section 1: 核心属性 */}
+                <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80 space-y-2 text-xs">
+                  <div className="text-[11px] font-bold text-amber-400/90 border-b border-slate-800/60 pb-1">
+                    核心属性
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-slate-300">
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">速度 (BPM):</span>
+                      <input
+                        type="number"
+                        value={customDnaBpm}
+                        onChange={(e) => setCustomDnaBpm(Number(e.target.value))}
+                        className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-xs text-amber-300 font-mono w-full mt-0.5"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">调性 (Key):</span>
+                      <input
+                        type="text"
+                        value={customDnaKey}
+                        onChange={(e) => setCustomDnaKey(e.target.value)}
+                        className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-xs text-indigo-300 font-mono w-full mt-0.5"
+                      />
+                    </div>
+                  </div>
+                  <div className="pt-1">
+                    <span className="text-slate-500 block text-[10px]">主风格 / 细分风格:</span>
+                    <span className="text-slate-200 font-medium text-[11px]">
+                      {analysis.genre || '华语流行'} / 慢速伤感抒情 Ballad
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">情绪标签:</span>
+                    <span className="text-slate-300 text-[11px]">
+                      {analysis.vibeMood?.join(', ') || '浪漫, 深情, 淡淡遗憾, 渴望'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">能量 / 张力:</span>
+                    <span className="text-slate-400 text-[11px]">
+                      中等能量，主歌克制压抑，副歌平衡混声情感爆发
+                    </span>
+                  </div>
+                </div>
+
+                {/* Section 2: 演唱与配器 */}
+                <div className="bg-slate-950/70 p-3 rounded-xl border border-slate-800/80 space-y-2 text-xs">
+                  <div className="text-[11px] font-bold text-indigo-400/90 border-b border-slate-800/60 pb-1">
+                    演唱与配器
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">配器 / 乐器:</span>
+                    <span className="text-slate-300 text-[11px]">
+                      {analysis.arrangementInstruments?.slice(0, 4).join(', ') ||
+                        '立式钢琴, 指弹木吉他, 独奏大提琴, 轻柔沙锤'}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">人声风格:</span>
+                    <span className="text-slate-300 text-[11px]">
+                      主歌为清澈带气声的亲密诉说，副歌过渡到饱满平衡混声
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">人声角色:</span>
+                    <span className="text-slate-300 text-[11px]">清澈深情男女声独唱 (可自定义)</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px]">音域跨度:</span>
+                    <span className="text-amber-300 text-[11px] font-mono">
+                      1.5 个八度 (C4-G5)，极佳 KTV 与短视频翻唱度
+                    </span>
+                  </div>
+                </div>
+
+                {/* Actions: Re-analyze / Change song */}
+                <div className="flex items-center space-x-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleLaunchEngine}
+                    className="flex-1 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all flex items-center justify-center space-x-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>重新提取 DNA</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Melody Hook Piano Roll & Web Audio Synthesizer */}
-          {blueprint.melodyHookNotes && blueprint.melodyHookNotes.length > 0 && (
-            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div>
-                  <h3 className="font-bold text-slate-100 text-md flex items-center space-x-2">
-                    <Music className="w-5 h-5 text-amber-400" />
-                    <span>副歌核心 Hook 旋律音符预览 (Web Audio Piano Synthesis)</span>
-                  </h3>
-                  <p className="text-xs text-slate-400">点击播放试听 AI 构思的副歌旋律小样</p>
+          {/* ========================================================= */}
+          {/* COLUMN 2: 02 创意生成核心 (5 Columns on XL) */}
+          {/* ========================================================= */}
+          <div className="xl:col-span-5 space-y-4">
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-5 shadow-xl">
+              {/* Header Step Badge & Mode Toggle */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                <div className="flex items-center space-x-2">
+                  <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold text-xs flex items-center justify-center border border-amber-500/30">
+                    02
+                  </span>
+                  <span className="font-bold text-sm text-slate-100">创意生成核心</span>
                 </div>
 
                 <div className="flex items-center space-x-2">
-                  <button
-                    onClick={handleExportMidi}
-                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer"
-                    title="将副歌 Hook 旋律与全曲和弦导出为标准 MIDI 文件"
-                  >
-                    <Download className="w-3.5 h-3.5 text-amber-400" />
-                    <span>导出 Hook MIDI</span>
-                  </button>
-
-                  <button
-                    onClick={handlePlayHookMelody}
-                    className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center space-x-2 cursor-pointer ${
-                      isPlayingHook
-                        ? 'bg-rose-500 text-slate-950 shadow-lg shadow-rose-500/20'
-                        : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20'
-                    }`}
-                  >
-                    {isPlayingHook ? (
-                      <>
-                        <Square className="w-4 h-4 fill-current" />
-                        <span>停止试听</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-4 h-4 fill-current" />
-                        <span>播放副歌 Hook 旋律小样</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Note Pills Visualizer */}
-              <div className="flex flex-wrap gap-2 pt-2">
-                {blueprint.melodyHookNotes.map((note, idx) => {
-                  const isActive = isPlayingHook && activeNoteIdx === idx;
-                  return (
-                    <div
-                      key={idx}
-                      onClick={() => playChord(note.pitch)}
-                      className={`p-3 rounded-xl border text-center transition-all cursor-pointer min-w-[60px] ${
-                        isActive
-                          ? 'bg-amber-400 text-slate-950 border-amber-300 scale-110 shadow-lg shadow-amber-400/40'
-                          : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800'
+                  <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setCreationMode('theme')}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        creationMode === 'theme' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'
                       }`}
                     >
-                      <span className="block font-mono font-bold text-sm">{note.pitch}</span>
-                      <span className="block text-xs font-semibold text-rose-300 mt-1">
-                        "{note.lyricWord}"
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Lead Sheet & Chords (弹唱和弦总谱) */}
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-6 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-slate-100 text-lg flex items-center space-x-2">
-                <FileText className="w-5 h-5 text-amber-400" />
-                <span>新歌和弦弹唱总谱 (Interactive Lead Sheet)</span>
-              </h3>
-              <button
-                onClick={handleExportMidi}
-                className="px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer"
-                title="导出全曲各段落和弦与旋律为 DAW MIDI 文件"
-              >
-                <Download className="w-3.5 h-3.5 text-amber-400" />
-                <span>导出 DAW 和弦 MIDI</span>
-              </button>
-            </div>
-
-            <div className="space-y-6">
-              {blueprint.structuralBlueprint?.map((section, sIdx) => (
-                <div key={sIdx} className="rounded-xl bg-slate-950 border border-slate-800/80 p-5 space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-                    <div className="flex items-center space-x-3">
-                      <span className="px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30">
-                        {section.sectionName}
-                      </span>
-                      <span className="text-xs text-slate-400 font-mono">
-                        和弦: {section.chordsUsed?.join(' - ')}
-                      </span>
-                    </div>
-
+                      主题创作
+                    </button>
                     <button
-                      onClick={() => handlePlayChordProg(sIdx, section.chordsUsed || [])}
-                      className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center space-x-1 self-start sm:self-auto"
+                      type="button"
+                      onClick={() => setCreationMode('existing_lyrics')}
+                      className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                        creationMode === 'existing_lyrics' ? 'bg-amber-500 text-slate-950 font-bold' : 'text-slate-400'
+                      }`}
                     >
-                      <Volume2 className="w-3.5 h-3.5" />
-                      <span>试听此段和弦</span>
+                      已有歌词
                     </button>
                   </div>
 
-                  {/* Lines with Chords overlay */}
-                  <div className="space-y-4 font-mono">
-                    {section.lines?.map((line, lIdx) => (
-                      <div key={lIdx} className="group relative bg-slate-900/50 p-3 rounded-lg border border-slate-800/50 hover:border-slate-700">
-                        {/* Chords row */}
-                        <div className="text-amber-400 font-bold text-xs tracking-wider">
-                          {line.chords || 'C'}
-                        </div>
-                        {/* Lyrics row */}
-                        <div className="text-slate-100 font-sans text-sm sm:text-base font-medium mt-1">
-                          {line.lineText}
-                        </div>
-
-                        {/* Rhyme tag */}
-                        {line.rhymeTag && (
-                          <span className="absolute right-3 top-3 px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 font-mono">
-                            [{line.rhymeTag}] 韵
-                          </span>
-                        )}
-
-                        {/* Polish button */}
-                        <button
-                          onClick={() => handleOpenPolishModal(line.lineText)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity absolute right-16 top-2.5 px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-[11px] text-amber-300 flex items-center space-x-1"
-                        >
-                          <Edit3 className="w-3 h-3" />
-                          <span>改写/润色</span>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-
-                  {section.performanceNote && (
-                    <p className="text-xs text-slate-400 italic bg-slate-900/40 p-2.5 rounded-lg border border-slate-800/40">
-                      💡 演唱提示: {section.performanceNote}
-                    </p>
-                  )}
+                  <label className="flex items-center space-x-1 text-xs text-slate-400 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={isInstrumentalOnly}
+                      onChange={(e) => setIsInstrumentalOnly(e.target.checked)}
+                      className="rounded bg-slate-950 border-slate-800 text-amber-500 focus:ring-0"
+                    />
+                    <span>纯音乐</span>
+                  </label>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* AI Music Prompts & Suno AI Anti-Drift Studio */}
-          <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 sm:p-8 space-y-6 shadow-2xl">
-            {/* Header Title */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-4 gap-3">
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold flex items-center space-x-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Suno AI 专属调教与防跑偏控制台 (Anti-Drift Studio)</span>
-                  </span>
-                </div>
-                <h3 className="font-extrabold text-slate-100 text-lg mt-1.5 flex items-center space-x-2">
-                  <span>根据仿写歌词与《{blueprint.title}》主题精确调节 Suno 生成参数</span>
-                </h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  精细微调风格权重、离散随机度、负向排除词与结构元标签，确保 AI 生成歌曲 100% 契合主题不跑偏
-                </p>
               </div>
 
-              <div className="flex items-center space-x-2 shrink-0">
+              {/* Form Input: 创作需求 (Prompt Textarea & Templates) */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <label className="text-xs font-bold text-slate-300 flex items-center space-x-1.5">
+                      <FileText className="w-3.5 h-3.5 text-amber-400" />
+                      <span>创作需求 (Prompt Concept)</span>
+                    </label>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 flex items-center space-x-1">
+                      <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
+                      <span>已启用顶级作词大师模式</span>
+                    </span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      type="button"
+                      onClick={() => setCreationPromptText(buildLyricistSkillPrompt(analysis))}
+                      className="text-[11px] text-amber-400 hover:text-amber-300 flex items-center space-x-1 cursor-pointer bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20"
+                    >
+                      <RefreshCw className="w-2.5 h-2.5" />
+                      <span>重新提取 DNA 提示词</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreationPromptText('')}
+                      className="text-[11px] text-slate-500 hover:text-slate-300 flex items-center space-x-0.5 cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                      <span>清空</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  rows={5}
+                  value={creationPromptText}
+                  onChange={(e) => setCreationPromptText(e.target.value)}
+                  placeholder="请输入或调整你的创作需求..."
+                  className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 focus:border-amber-500 text-slate-200 placeholder-slate-600 text-xs leading-relaxed focus:outline-none focus:ring-1 focus:ring-amber-500 custom-scrollbar"
+                />
+
+                {/* Quick Templates Selector */}
+                <div className="space-y-1 pt-1">
+                  <div className="text-[10px] text-slate-500 font-semibold flex items-center space-x-1">
+                    <Sparkles className="w-3 h-3 text-amber-400" />
+                    <span>快捷灵感模版 (点击快速载入):</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROMPT_TEMPLATES.map((tmpl, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => {
+                          setCreationPromptText(tmpl.content);
+                          if (idx === 0) setNewSongTitle('我们终究是错过');
+                          else if (idx === 1) setNewSongTitle('晚风里的第三封信');
+                          else if (idx === 2) setNewSongTitle('在人海与你擦肩');
+                        }}
+                        className="text-[10px] px-2 py-1 rounded-lg bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-slate-300 hover:text-amber-300 transition-all cursor-pointer truncate max-w-full"
+                      >
+                        {tmpl.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* ========================================================= */}
+              {/* CORE MODULE: 歌词结构对标 (Lyrics Structure Comparison) */}
+              {/* ========================================================= */}
+              <div className="rounded-xl bg-slate-950 border border-slate-800 p-4 space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                  <div className="flex items-center space-x-2">
+                    <AlignLeft className="w-4 h-4 text-amber-400" />
+                    <span className="text-xs font-bold text-slate-200">歌词结构对标</span>
+                  </div>
+                  <div className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                    {parsedStructureData.totalSections}段 · {parsedStructureData.totalLines}句
+                  </div>
+                </div>
+
+                {/* Sub-split: Left Text Input + Right Structure Stats */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-stretch">
+                  {/* Left: Raw Lyrics Editor with Section Tags */}
+                  <div className="md:col-span-7 flex flex-col space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-500">原曲对标歌词与段落标签:</span>
+                    </div>
+                    <textarea
+                      rows={10}
+                      value={refLyricsText}
+                      onChange={handleLyricsChange}
+                      placeholder="在此处输入原歌对标歌词或带[主歌][副歌]标签的内容..."
+                      className="w-full flex-1 p-2.5 rounded-lg bg-slate-900 border border-slate-800 focus:border-amber-500 text-slate-200 font-mono text-[11px] leading-relaxed focus:outline-none custom-scrollbar resize-y min-h-[160px]"
+                    />
+
+                    <div className="flex items-center justify-end space-x-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={handleAiAutoStructure}
+                        disabled={isParsingStructure}
+                        className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-[10px] font-semibold transition-all flex items-center space-x-1 cursor-pointer disabled:opacity-50"
+                      >
+                        {isParsingStructure ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Sparkles className="w-3 h-3 text-indigo-300" />
+                        )}
+                        <span>AI 补结构</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setParsedStructureData(parseLyricsClientSide(refLyricsText))}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-semibold transition-all flex items-center space-x-1 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>实时识别</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Right: Structure Sections & Line Syllable Stats */}
+                  <div className="md:col-span-5 bg-slate-900/90 p-3 rounded-lg border border-slate-800/80 flex flex-col space-y-2 max-h-[240px] overflow-y-auto custom-scrollbar">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block border-b border-slate-800 pb-1">
+                      结构与字数统计看板
+                    </span>
+
+                    <div className="space-y-2">
+                      {parsedStructureData.sections.map((sec, sIdx) => (
+                        <div key={sIdx} className="bg-slate-950 p-2 rounded-md border border-slate-800/60 space-y-1">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-bold text-amber-300">{sec.sectionName}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">共 {sec.lineCount} 句</span>
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono leading-relaxed">
+                            {sec.lines.map((l) => (
+                              <span key={l.lineIndex} className="inline-block mr-1.5 mb-0.5">
+                                {l.lineIndex}句 <strong className="text-slate-200">{l.syllableCount}字</strong>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+
+                      {parsedStructureData.sections.length === 0 && (
+                        <div className="text-center py-4 text-[10px] text-slate-500">
+                          暂无结构标签，点击左下方【AI 补结构】自动生成
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Imitation Intensity Toggle */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-slate-300">仿写精度模版</span>
+                  <span className="text-[10px] text-amber-400">100% 结构小节字数对齐</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['light', 'medium', 'exact'] as const).map((lvl) => (
+                    <button
+                      key={lvl}
+                      type="button"
+                      onClick={() => setImitationIntensity(lvl)}
+                      className={`p-2 rounded-xl border text-center transition-all cursor-pointer text-xs ${
+                        imitationIntensity === lvl
+                          ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold'
+                          : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-300'
+                      }`}
+                    >
+                      {lvl === 'exact' ? '1:1 严格对标' : lvl === 'medium' ? '中度均衡' : '轻度拓展'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Action Buttons: 启动 DNA 创作引擎 + 刷新提示词方案 */}
+              <div className="flex items-center space-x-3 pt-2">
                 <button
-                  onClick={() => {
-                    const compiledLyrics = compileSunoMetatagLyrics(blueprint, sunoVocalType);
-                    const fullConfig = `[Suno Custom Mode 一键应用配方]\n\n【Title】: ${blueprint.title}\n\n【Style of Music】:\n${sunoStylePrompt}\n\n【Style Weight】: ${sunoWeight}%\n【Randomness / Weirdness】: ${sunoRandomness}%\n【Exclude Styles (Negative Prompt)】:\n${sunoNegativePrompt}\n\n【Lyrics with Metatags】:\n${compiledLyrics}`;
-                    handleCopyText(fullConfig, 'fullSunoSuite');
-                  }}
-                  className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-slate-950 font-bold text-xs transition-all shadow-lg shadow-amber-500/20 flex items-center space-x-1.5 cursor-pointer"
+                  type="button"
+                  onClick={handleLaunchEngine}
+                  disabled={isGenerating}
+                  className="flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-slate-950 font-black text-xs sm:text-sm shadow-xl shadow-amber-500/20 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 cursor-pointer"
                 >
-                  {copiedType === 'fullSunoSuite' ? (
+                  {isGenerating ? (
                     <>
-                      <Check className="w-4 h-4 text-emerald-950" />
-                      <span>已复制全套配方！</span>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>正在全速生成《{newSongTitle}》...</span>
                     </>
                   ) : (
                     <>
-                      <Copy className="w-4 h-4" />
-                      <span>一键复制 Suno Custom Mode 完整配置</span>
+                      <Zap className="w-4 h-4 fill-current" />
+                      <span>启动 DNA 创作引擎 ⚡</span>
                     </>
                   )}
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prompt = `mandopop ballad, ${analysis.arrangementInstruments?.slice(0, 3).join(', ') || 'piano, acoustic guitar, cello'}, ${sunoVocalType}, ${customDnaBpm} bpm, emotional, bittersweet, cinematic`;
+                    setSunoStylePrompt(prompt);
+                    handleCopyText(prompt, 'quickStyle');
+                  }}
+                  className="px-3.5 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all flex items-center space-x-1.5 shrink-0 cursor-pointer"
+                  title="重新计算并生成 Suno 格式化 Style 提示词"
+                >
+                  <RefreshCw className="w-4 h-4 text-amber-400" />
+                  <span className="hidden sm:inline">刷新提示词</span>
+                </button>
+              </div>
+
+              {/* Suno 提示词 Card */}
+              <div className="rounded-xl bg-slate-950 border border-slate-800/90 p-3.5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-1.5">
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                    <span className="text-xs font-bold text-slate-200">SUNO 提示词 (Style of Music)</span>
+                    <span className="text-[10px] text-amber-400/80 bg-amber-500/10 px-1.5 py-0.2 rounded border border-amber-500/20">
+                      TIP: 支持自定义编辑
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleCopyText(sunoStylePrompt, 'sunoStyle')}
+                    className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center space-x-1 cursor-pointer"
+                  >
+                    {copiedType === 'sunoStyle' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedType === 'sunoStyle' ? '已复制' : '复制'}</span>
+                  </button>
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={sunoStylePrompt}
+                  onChange={(e) => setSunoStylePrompt(e.target.value)}
+                  className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-amber-300 font-mono text-[11px] leading-relaxed focus:outline-none focus:border-amber-500 resize-none"
+                />
               </div>
             </div>
+          </div>
 
-            {/* Block 1: Quick Style Preset Selector */}
-            <div className="space-y-3 bg-slate-950/80 p-4 rounded-xl border border-slate-800">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-slate-200 flex items-center space-x-1.5">
-                  <Flame className="w-4 h-4 text-amber-400" />
-                  <span>防跑偏风格流派一键预设 (Quick Style Presets)</span>
-                </span>
-                <span className="text-[11px] text-slate-400">点击自动填入优化后的 Style Tags & 排除词</span>
-              </div>
+          {/* ========================================================= */}
+          {/* COLUMN 3: 03 歌词创作方案 (4 Columns on XL) */}
+          {/* ========================================================= */}
+          <div className="xl:col-span-4 space-y-4">
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-5 space-y-4 shadow-xl flex flex-col h-full justify-between">
+              <div>
+                {/* Header Step Badge & Actions */}
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3 gap-2">
+                  <div className="flex items-center space-x-2">
+                    <span className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-300 font-mono font-bold text-xs flex items-center justify-center border border-amber-500/30">
+                      03
+                    </span>
+                    <span className="font-bold text-sm text-slate-100">歌词创作方案</span>
+                  </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-                {SUNO_STYLE_PRESETS.map((preset) => {
-                  const isActive = activeSunoPreset === preset.id;
-                  return (
+                  <div className="flex items-center space-x-2">
                     <button
-                      key={preset.id}
                       type="button"
-                      onClick={() => {
-                        setActiveSunoPreset(preset.id);
-                        setSunoStylePrompt(preset.style);
-                        setSunoVocalType(preset.vocal);
-                        setSunoInstrumentation(preset.inst);
-                        setSunoNegativePrompt(preset.negative);
-                      }}
-                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                        isActive
-                          ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold shadow-md shadow-amber-500/10'
-                          : 'bg-slate-900 text-slate-300 border-slate-800 hover:border-slate-700 hover:bg-slate-850'
-                      }`}
+                      onClick={handleLaunchEngine}
+                      disabled={isGenerating}
+                      className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-amber-300 text-xs transition-all cursor-pointer"
+                      title="重新生成歌词"
                     >
-                      <span className="text-xs font-semibold block">{preset.name}</span>
+                      <RefreshCw className="w-3.5 h-3.5" />
                     </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Block 2: Interactive Sliders & Anti-Drift Controls */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-              {/* Left Column: Weight Sliders & Negative Exclusions */}
-              <div className="space-y-5 bg-slate-950/90 p-5 rounded-2xl border border-slate-800 shadow-md">
-                <h4 className="font-bold text-xs text-amber-400 uppercase tracking-wider flex items-center space-x-1.5 border-b border-slate-800 pb-2.5">
-                  <SlidersHorizontal className="w-4 h-4 text-amber-400" />
-                  <span>Suno AI 参数精细度与防跑偏滑块</span>
-                </h4>
-
-                {/* Slider 1: Style Guidance Weight (风格跟随度 / 权重) */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-200 flex items-center space-x-1.5">
-                      <Target className="w-3.5 h-3.5 text-amber-400" />
-                      <span>风格跟随度 (Style Guidance Weight)</span>
-                    </label>
-                    <span className="text-xs font-mono font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
-                      {sunoWeight}% {sunoWeight >= 80 ? '(高约束·防跑偏)' : '(中灵活性)'}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="50"
-                    max="100"
-                    value={sunoWeight}
-                    onChange={(e) => setSunoWeight(Number(e.target.value))}
-                    className="w-full accent-amber-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 leading-normal">
-                    💡 建议设为 <strong className="text-amber-300">80%-90%</strong>。权重越高，Suno 越严格依附于《{blueprint.title}》的乐理配方与情绪，杜绝AI擅自换曲风。
-                  </p>
-                </div>
-
-                {/* Slider 2: Weirdness / Creativity Randomness (离散随机度) */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-200 flex items-center space-x-1.5">
-                      <Zap className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>离散随机度 (Weirdness / Randomness)</span>
-                    </label>
-                    <span className="text-xs font-mono font-bold text-indigo-300 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/30">
-                      {sunoRandomness}% {sunoRandomness <= 30 ? '(稳定严谨)' : '(高离散随机)'}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={sunoRandomness}
-                    onChange={(e) => setSunoRandomness(Number(e.target.value))}
-                    className="w-full accent-indigo-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
-                  />
-                  <p className="text-[11px] text-slate-400 leading-normal">
-                    💡 建议设为 <strong className="text-indigo-300">15%-30%</strong>。较低的随机度能保持和声与旋律走线平稳，防止副歌段落出现爆音或奇怪电子干扰。
-                  </p>
-                </div>
-
-                {/* Field 3: Anti-Drift Negative Prompt (排除词 / Excluded Styles) */}
-                <div className="space-y-2 pt-1 border-t border-slate-800/80">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-200 flex items-center space-x-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5 text-rose-400" />
-                      <span>防跑偏排除词 (Exclude Styles / Negative Tags)</span>
-                    </label>
-                    <span className="text-[11px] text-rose-300 font-mono">告诉 AI 绝对不要包含的元素</span>
-                  </div>
-                  <input
-                    type="text"
-                    value={sunoNegativePrompt}
-                    onChange={(e) => setSunoNegativePrompt(e.target.value)}
-                    placeholder="如 no auto-tune, no heavy rock, no EDM drop, no shouting"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 font-mono text-xs focus:border-rose-500 focus:outline-none"
-                  />
-                  {/* Quick Toggle Chips for Excluded Tags */}
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {['no auto-tune', 'no EDM', 'no heavy metal', 'no shouting', 'no rap', 'no distortion'].map((tag) => {
-                      const exists = sunoNegativePrompt.includes(tag);
-                      return (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => {
-                            if (exists) {
-                              setSunoNegativePrompt(
-                                sunoNegativePrompt
-                                  .split(',')
-                                  .map((s) => s.trim())
-                                  .filter((s) => s !== tag)
-                                  .join(', ')
-                              );
-                            } else {
-                              setSunoNegativePrompt(
-                                sunoNegativePrompt ? `${sunoNegativePrompt}, ${tag}` : tag
-                              );
-                            }
-                          }}
-                          className={`text-[10px] px-2 py-0.5 rounded-md border transition-all cursor-pointer ${
-                            exists
-                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/50 font-bold'
-                              : 'bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          {exists ? `✓ ${tag}` : `+ ${tag}`}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              {/* Right Column: Style of Music Editor & Vocal/Instrument Tweaks */}
-              <div className="space-y-5 bg-slate-950/90 p-5 rounded-2xl border border-slate-800 shadow-md">
-                <h4 className="font-bold text-xs text-indigo-400 uppercase tracking-wider flex items-center space-x-1.5 border-b border-slate-800 pb-2.5">
-                  <Radio className="w-4 h-4 text-indigo-400" />
-                  <span>Suno Style of Music (风格与人声调校)</span>
-                </h4>
-
-                {/* Style of Music Text Area */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-200">
-                      Suno Style Prompt 提示词 (限制 120 字符)
-                    </label>
-                    <span
-                      className={`text-[11px] font-mono font-bold ${
-                        sunoStylePrompt.length > 120 ? 'text-rose-400' : 'text-emerald-400'
-                      }`}
+                    <button
+                      type="button"
+                      onClick={() => handleCopyText(compileFullSunoSuite(), 'blueprintLyrics')}
+                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-all flex items-center space-x-1 cursor-pointer"
                     >
-                      {sunoStylePrompt.length} / 120 字符 {sunoStylePrompt.length > 120 ? '(超出建议缩短)' : ''}
-                    </span>
+                      {copiedType === 'blueprintLyrics' ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>{copiedType === 'blueprintLyrics' ? '已复制' : '复制歌词'}</span>
+                    </button>
                   </div>
-                  <textarea
-                    rows={3}
-                    value={sunoStylePrompt}
-                    onChange={(e) => setSunoStylePrompt(e.target.value)}
-                    placeholder="mandopop, acoustic guitar, soft piano, warm male vocal, 84 bpm, emotional"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-amber-300 font-mono text-xs leading-relaxed focus:border-amber-500 focus:outline-none"
-                  />
                 </div>
 
-                {/* Vocal Style Selection */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-200">
-                    人声质感 (Vocal Texture)
-                  </label>
-                  <input
-                    type="text"
-                    value={sunoVocalType}
-                    onChange={(e) => setSunoVocalType(e.target.value)}
-                    placeholder="Warm intimate male vocal with soft breathiness"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-xs focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  💡 点击分隔线加号插入新内容，选中歌词片段可重写选区
+                </p>
 
-                {/* Instrumentation Selection */}
-                <div className="space-y-2">
-                  <label className="block text-xs font-semibold text-slate-200">
-                    核心编曲乐器 (Instrumentation)
-                  </label>
-                  <input
-                    type="text"
-                    value={sunoInstrumentation}
-                    onChange={(e) => setSunoInstrumentation(e.target.value)}
-                    placeholder="Fingerstyle acoustic guitar, grand piano, solo cello"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-200 text-xs focus:border-amber-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-            </div>
+                {/* Structured Lyrics Content Viewer */}
+                <div className="space-y-3 mt-3 max-h-[580px] overflow-y-auto custom-scrollbar pr-1">
+                  {blueprint ? (
+                    // Display Generated Blueprint Sections
+                    blueprint.structuralBlueprint?.map((sec, sIdx) => (
+                      <div key={sIdx} className="space-y-2">
+                        {/* Section Tag with Metatag info */}
+                        <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                          <div className="flex items-center space-x-2">
+                            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-xs font-mono border border-amber-500/30">
+                              [{sec.sectionName}]
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono truncate">
+                              {sec.vocalPlacement || '气声叙事'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            和弦: {sec.chordsUsed?.slice(0, 3).join(' ')}
+                          </span>
+                        </div>
 
-            {/* Block 3: Suno Custom Mode Copy-Ready Form Cards */}
-            <div className="space-y-4 pt-2">
-              <h4 className="font-bold text-sm text-slate-100 flex items-center space-x-2">
-                <ListChecks className="w-4 h-4 text-amber-400" />
-                <span>Suno 官方 Custom Mode 一键应用配方卡 (Direct Copy Cards)</span>
-              </h4>
+                        {/* Lyrics lines */}
+                        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 space-y-1.5 font-sans">
+                          {sec.lines?.map((line, lIdx) => (
+                            <div
+                              key={lIdx}
+                              className="group flex items-center justify-between text-xs py-1 px-1.5 rounded hover:bg-slate-800/40 transition-colors"
+                            >
+                              <div className="text-slate-200 font-medium">
+                                <span>{line.lineText}</span>
+                                {line.rhymeTag && (
+                                  <span className="ml-2 text-[10px] text-slate-500 font-mono">
+                                    [{line.rhymeTag}]
+                                  </span>
+                                )}
+                              </div>
+                              <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPolishLine(line.lineText);
+                                    setShowPolishModal(true);
+                                  }}
+                                  className="text-[10px] text-amber-400 hover:text-amber-300 px-1 py-0.5 rounded bg-slate-800"
+                                >
+                                  润色
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Card 1: Metatags Lyrics Block */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-amber-400 flex items-center space-x-1.5">
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>1. 歌词框 (嵌入 Suno 结构元标签)</span>
-                    </span>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => setShowMetatagsLyricView(!showMetatagsLyricView)}
-                        className="text-[11px] text-slate-400 hover:text-slate-200 underline"
-                      >
-                        {showMetatagsLyricView ? '折叠文本' : '预览全词'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          const compiled = compileSunoMetatagLyrics(blueprint, sunoVocalType);
-                          handleCopyText(compiled, 'metatagsLyrics');
-                        }}
-                        className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 flex items-center space-x-1"
-                      >
-                        {copiedType === 'metatagsLyrics' ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                        <span>复制带标签歌词</span>
-                      </button>
-                    </div>
-                  </div>
+                        {/* Plus insert line divider */}
+                        <div className="flex items-center justify-center my-1">
+                          <button
+                            type="button"
+                            className="w-5 h-5 rounded-full bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-400 flex items-center justify-center text-xs transition-all cursor-pointer shadow-sm"
+                            title="在此处插入自定义段落或过渡句"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    // Display Default / Pre-generation Structure Template
+                    parsedStructureData.sections.map((sec, sIdx) => (
+                      <div key={sIdx} className="space-y-2">
+                        <div className="flex items-center justify-between bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                          <div className="flex items-center space-x-2">
+                            <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold text-xs font-mono border border-amber-500/30">
+                              {sec.tag}
+                            </span>
+                            <span className="text-[11px] text-slate-400 font-mono">
+                              {sec.sectionName === '前奏'
+                                ? 'Atmospheric synth opening, clear breathy'
+                                : sec.sectionName === '主歌'
+                                ? 'Intimate breathy chest voice'
+                                : sec.sectionName === '导歌'
+                                ? 'Steady drive, vocal progression'
+                                : sec.sectionName === '副歌'
+                                ? 'Dense synth-pop, balanced mixed voice'
+                                : 'Dramatic climax'}
+                            </span>
+                          </div>
+                        </div>
 
-                  <p className="text-[11px] text-slate-400">
-                    已在每段歌词头部注入 <code className="text-amber-300">[Verse 1 - Soft Acoustic]</code>、<code className="text-amber-300">[Chorus - Emotional Belt]</code> 等中括号结构指令，强力约束 AI 按情绪演进。
-                  </p>
+                        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-800/60 space-y-1.5 font-sans">
+                          {sec.lines.map((line, lIdx) => (
+                            <div
+                              key={lIdx}
+                              className="group flex items-center justify-between text-xs py-1 px-1.5 rounded hover:bg-slate-800/40"
+                            >
+                              <div className="text-slate-200 font-medium">
+                                <span>{line.text}</span>
+                                <span className="ml-2 text-[10px] text-slate-500 font-mono">
+                                  ({line.syllableCount}字)
+                                </span>
+                              </div>
+                              <div className="opacity-0 group-hover:opacity-100 flex items-center space-x-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setPolishLine(line.text);
+                                    setShowPolishModal(true);
+                                  }}
+                                  className="text-[10px] text-amber-400 hover:text-amber-300 px-1 py-0.5 rounded bg-slate-800"
+                                >
+                                  润色
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
 
-                  {showMetatagsLyricView && (
-                    <pre className="text-[11px] font-mono text-slate-300 leading-relaxed bg-slate-900 p-3 rounded-lg border border-slate-800 max-h-60 overflow-y-auto whitespace-pre-wrap custom-scrollbar">
-                      {compileSunoMetatagLyrics(blueprint, sunoVocalType)}
-                    </pre>
+                        <div className="flex items-center justify-center my-1">
+                          <button
+                            type="button"
+                            className="w-5 h-5 rounded-full bg-slate-800 hover:bg-amber-500 hover:text-slate-950 text-slate-400 flex items-center justify-center text-xs transition-all cursor-pointer"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))
                   )}
                 </div>
-
-                {/* Card 2: Style of Music Prompt Box */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-indigo-400 flex items-center space-x-1.5">
-                      <Music className="w-3.5 h-3.5" />
-                      <span>2. 风格提示词框 (Style of Music)</span>
-                    </span>
-                    <button
-                      onClick={() => handleCopyText(sunoStylePrompt, 'sunoStyleField')}
-                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 flex items-center space-x-1"
-                    >
-                      {copiedType === 'sunoStyleField' ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      <span>复制 Style 词</span>
-                    </button>
-                  </div>
-                  <p className="text-xs font-mono text-amber-300 leading-relaxed bg-slate-900 p-3 rounded-lg border border-slate-800">
-                    {sunoStylePrompt}
-                  </p>
-                </div>
-
-                {/* Card 3: Negative Excluded Tags */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-rose-400 flex items-center space-x-1.5">
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      <span>3. 排除风格框 (Exclude Styles)</span>
-                    </span>
-                    <button
-                      onClick={() => handleCopyText(sunoNegativePrompt, 'sunoNegativeField')}
-                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 flex items-center space-x-1"
-                    >
-                      {copiedType === 'sunoNegativeField' ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      <span>复制排除词</span>
-                    </button>
-                  </div>
-                  <p className="text-xs font-mono text-rose-300 leading-relaxed bg-slate-900 p-3 rounded-lg border border-slate-800">
-                    {sunoNegativePrompt}
-                  </p>
-                </div>
-
-                {/* Card 4: Udio Prompt & DAW Guide */}
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-emerald-400 flex items-center space-x-1.5">
-                      <Radio className="w-3.5 h-3.5" />
-                      <span>4. Udio AI & DAW 提示扩展</span>
-                    </span>
-                    <button
-                      onClick={() => handleCopyText(blueprint.aiMusicPrompt?.udioPrompt || '', 'udioPrompt')}
-                      className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 flex items-center space-x-1"
-                    >
-                      {copiedType === 'udioPrompt' ? (
-                        <Check className="w-3.5 h-3.5 text-emerald-400" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      <span>复制 Udio 提示词</span>
-                    </button>
-                  </div>
-                  <p className="text-xs font-mono text-slate-300 leading-relaxed bg-slate-900 p-3 rounded-lg border border-slate-800">
-                    {blueprint.aiMusicPrompt?.udioPrompt}
-                  </p>
-                </div>
               </div>
-            </div>
 
-            {/* Block 4: Anti-Drift Best Practices Guide */}
-            <div className="bg-gradient-to-r from-amber-500/10 via-slate-950 to-indigo-500/10 p-5 rounded-2xl border border-amber-500/30 space-y-3">
-              <h4 className="font-bold text-xs text-amber-300 flex items-center space-x-2">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                <span>Suno AI “不跑偏” 调校 6 大金律 (Anti-Drift Rules for Lyrics & Theme)</span>
-              </h4>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-slate-300">
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-amber-300 block mb-1">1. 中括号结构约束</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    在歌词各段落头部务必保留 <code className="text-amber-400">[Verse]</code>、<code className="text-amber-400">[Chorus]</code> 标记，Suno 识别后绝不跳乱段落顺序。
-                  </p>
-                </div>
-
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-indigo-300 block mb-1">2. 动态演唱加词</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    在 <code className="text-indigo-400">[Chorus - High Energy Belt]</code> 追加情绪词，能引导 AI 在副歌自动飙高音与爆发全场弦乐。
-                  </p>
-                </div>
-
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-rose-300 block mb-1">3. 排除词彻底堵漏</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    填入 <code className="text-rose-400">no auto-tune, no heavy metal</code> 排除词，彻底杜绝 AI 乱用电音修音或电吉他失真爆音。
-                  </p>
-                </div>
-
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-emerald-300 block mb-1">4. 权重与离散度黄金比</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    风格跟随度保持 80%-90%，离散随机度保持 15%-30%，这是音乐听感最自然且最严守主题的经验参数。
-                  </p>
-                </div>
-
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-sky-300 block mb-1">5. 保持人声突出</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    在 Style 提示词中加入 <code className="text-sky-400">warm male vocal, clear vocal focus</code>，可保证人声歌词清晰可听不被伴奏淹没。
-                  </p>
-                </div>
-
-                <div className="bg-slate-900/80 p-3 rounded-xl border border-slate-800">
-                  <span className="font-bold text-amber-300 block mb-1">6. 120 字符临界控制</span>
-                  <p className="text-slate-400 text-[11px] leading-relaxed">
-                    Suno 的 Style 框限制 120 字符，精简提取核心流派 + 乐器 + 人声 + BPM 才是最精准的触发方式。
-                  </p>
-                </div>
+              {/* Bottom Big Action: 「立即在 SUNO 中创作」 */}
+              <div className="pt-4 border-t border-slate-800 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const fullConfig = compileFullSunoSuite();
+                    handleCopyText(fullConfig, 'sunoLaunch');
+                    setShowSunoModal(true);
+                  }}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-slate-950 font-black text-sm shadow-xl shadow-amber-500/20 transition-all flex items-center justify-center space-x-2 cursor-pointer"
+                >
+                  <span>立即在 SUNO 中创作</span>
+                  <ExternalLink className="w-4 h-4 stroke-[2.5]" />
+                </button>
+                <p className="text-[10px] text-slate-400 text-center">
+                  点击将自动打包复制 Style Prompt、元标签结构歌词与防跑偏参数
+                </p>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Rhyme & Polish Modal */}
+      {/* VIEW 2: INTERACTIVE LEAD SHEET & SYNTHESIS AUDIO (彈唱和弦總譜 & MIDI 導出) */}
+      {studioView === 'leadsheet' && (
+        <div className="space-y-6">
+          {blueprint ? (
+            <div className="space-y-6">
+              {/* Melody Hook Piano Roll & Web Audio Synthesizer */}
+              {blueprint.melodyHookNotes && blueprint.melodyHookNotes.length > 0 && (
+                <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-4 shadow-xl">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                      <h3 className="font-bold text-slate-100 text-md flex items-center space-x-2">
+                        <Music className="w-5 h-5 text-amber-400" />
+                        <span>副歌核心 Hook 旋律音符预览 (Web Audio Piano Synthesis)</span>
+                      </h3>
+                      <p className="text-xs text-slate-400">点击播放试听 AI 构思的副歌旋律小样</p>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={handleExportMidi}
+                        className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer"
+                      >
+                        <Download className="w-3.5 h-3.5 text-amber-400" />
+                        <span>导出 Hook MIDI</span>
+                      </button>
+
+                      <button
+                        onClick={handlePlayHookMelody}
+                        className={`px-5 py-2.5 rounded-xl font-bold text-xs transition-all flex items-center space-x-2 cursor-pointer ${
+                          isPlayingHook
+                            ? 'bg-rose-500 text-slate-950 shadow-lg shadow-rose-500/20'
+                            : 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-lg shadow-amber-500/20'
+                        }`}
+                      >
+                        {isPlayingHook ? (
+                          <>
+                            <Square className="w-4 h-4 fill-current" />
+                            <span>停止试听</span>
+                          </>
+                        ) : (
+                          <>
+                            <Play className="w-4 h-4 fill-current" />
+                            <span>播放副歌 Hook 旋律小样</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Note Pills Visualizer */}
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    {blueprint.melodyHookNotes.map((note, idx) => {
+                      const isActive = isPlayingHook && activeNoteIdx === idx;
+                      return (
+                        <div
+                          key={idx}
+                          onClick={() => playChord(note.pitch)}
+                          className={`p-3 rounded-xl border text-center transition-all cursor-pointer min-w-[60px] ${
+                            isActive
+                              ? 'bg-amber-400 text-slate-950 border-amber-300 scale-110 shadow-lg shadow-amber-400/40'
+                              : 'bg-slate-950 hover:bg-slate-800 text-slate-200 border border-slate-800'
+                          }`}
+                        >
+                          <span className="block font-mono font-bold text-sm">{note.pitch}</span>
+                          <span className="block text-xs font-semibold text-rose-300 mt-1">
+                            "{note.lyricWord}"
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Lead Sheet & Chords (弹唱和弦总谱) */}
+              <div className="rounded-2xl bg-slate-900 border border-slate-800 p-6 space-y-6 shadow-xl">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <h3 className="font-bold text-slate-100 text-lg flex items-center space-x-2">
+                    <FileText className="w-5 h-5 text-amber-400" />
+                    <span>新歌和弦弹唱总谱 (Interactive Lead Sheet)</span>
+                  </h3>
+                  <button
+                    onClick={handleExportMidi}
+                    className="px-3.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xs font-semibold transition-all flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5 text-amber-400" />
+                    <span>导出 DAW 和弦 MIDI</span>
+                  </button>
+                </div>
+
+                <div className="space-y-6">
+                  {blueprint.structuralBlueprint?.map((section, sIdx) => (
+                    <div key={sIdx} className="rounded-xl bg-slate-950 border border-slate-800/80 p-5 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                        <div className="flex items-center space-x-3">
+                          <span className="px-3 py-1 rounded-lg bg-amber-500/20 text-amber-300 font-bold text-xs border border-amber-500/30">
+                            {section.sectionName}
+                          </span>
+                          <span className="text-xs text-slate-400 font-mono">
+                            和弦: {section.chordsUsed?.join(' - ')}
+                          </span>
+                        </div>
+
+                        <button
+                          onClick={() => handlePlayChordProg(sIdx, section.chordsUsed || [])}
+                          className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center space-x-1 self-start sm:self-auto cursor-pointer"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>试听此段和弦</span>
+                        </button>
+                      </div>
+
+                      {/* Lines with Chords overlay */}
+                      <div className="space-y-4 font-mono">
+                        {section.lines?.map((line, lIdx) => (
+                          <div
+                            key={lIdx}
+                            className="group relative bg-slate-900/50 p-3 rounded-lg border border-slate-800/50 hover:border-slate-700"
+                          >
+                            <div className="text-amber-400 font-bold text-xs tracking-wider">
+                              {line.chords || 'C'}
+                            </div>
+                            <div className="text-slate-100 font-sans text-sm sm:text-base font-medium mt-1">
+                              {line.lineText}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-2xl bg-slate-900 border border-slate-800 p-12 text-center space-y-4">
+              <Sparkles className="w-12 h-12 text-amber-400 mx-auto opacity-60" />
+              <h3 className="text-lg font-bold text-slate-200">尚未生成原创歌曲 Blueprint</h3>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                请先在「3-栏全流程创作台」中点击【启动 DNA 创作引擎 ⚡】，生成后即可在此试听互动和弦、钢琴 Hook 旋律与导出 MIDI。
+              </p>
+              <button
+                type="button"
+                onClick={() => setStudioView('3column')}
+                className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all cursor-pointer inline-flex items-center space-x-2"
+              >
+                <span>前往 3-栏创作台生成</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Polish Modal */}
       {showPolishModal && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
+              <h4 className="font-bold text-slate-100 text-sm flex items-center space-x-2">
                 <Edit3 className="w-4 h-4 text-amber-400" />
-                <span>歌词金句润色助攻</span>
-              </h3>
+                <span>歌词润色与押韵助手</span>
+              </h4>
               <button
                 onClick={() => setShowPolishModal(false)}
-                className="text-slate-400 hover:text-slate-200 text-sm"
+                className="text-slate-500 hover:text-slate-300"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">原句：</label>
+            <div className="space-y-2">
+              <span className="text-xs text-slate-400">当前句:</span>
               <input
                 type="text"
                 value={polishLine}
                 onChange={(e) => setPolishLine(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-sm font-sans"
+                className="w-full p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-slate-100 text-xs focus:outline-none focus:border-amber-500"
               />
             </div>
 
             <button
-              onClick={handleRequestPolish}
+              onClick={async () => {
+                if (!polishLine.trim()) return;
+                setIsPolishing(true);
+                try {
+                  const res = await fetch('/api/rhyme-helper', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ line: polishLine, targetRhyme: '流畅押韵', style: '伤感下沉' }),
+                  });
+                  const data = await res.json();
+                  setPolishOptions(data.options || []);
+                } catch (e) {
+                  console.error(e);
+                } finally {
+                  setIsPolishing(false);
+                }
+              }}
               disabled={isPolishing}
-              className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all flex items-center justify-center space-x-1"
+              className="w-full py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-all flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
             >
-              {isPolishing ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>AI 正在酝酿不同押韵与诗意选项...</span>
-                </>
-              ) : (
-                <span>生成 4 种优质同韵改写方案</span>
-              )}
+              {isPolishing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              <span>获取 AI 高阶填词建议</span>
             </button>
 
             {polishOptions.length > 0 && (
               <div className="space-y-2 pt-2">
-                <span className="text-xs text-slate-400 font-semibold">推荐润色结果：</span>
-                {polishOptions.map((opt, i) => (
-                  <div
-                    key={i}
-                    onClick={() => handleCopyText(opt, `opt-${i}`)}
-                    className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-amber-500/50 text-xs text-slate-200 cursor-pointer flex items-center justify-between group"
-                  >
-                    <span>{opt}</span>
-                    <span className="text-[10px] text-amber-400 group-hover:underline">点击复制</span>
-                  </div>
-                ))}
+                <span className="text-xs font-semibold text-slate-300">润色候选建议:</span>
+                <div className="space-y-1.5">
+                  {polishOptions.map((opt, idx) => (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        handleCopyText(opt, `opt-${idx}`);
+                      }}
+                      className="p-2.5 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs text-slate-200 transition-colors cursor-pointer flex items-center justify-between"
+                    >
+                      <span>{opt}</span>
+                      <span className="text-[10px] text-amber-400">点击复制</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Suno Suite Export Modal */}
+      {showSunoModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl max-w-2xl w-full p-6 sm:p-8 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center space-x-2">
+                <div className="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20">
+                  <ExternalLink className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-100 text-base">Suno AI 全套创作配方已准备就绪</h4>
+                  <p className="text-xs text-slate-400">已自动复制到剪贴板，可直接前往 Suno Custom 模式使用</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSunoModal(false)}
+                className="text-slate-500 hover:text-slate-300 p-1.5 rounded-lg hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs">
+                <span className="font-bold text-amber-400 block">Suno 填入步骤指南:</span>
+                <ol className="list-decimal list-inside space-y-1 text-slate-300 text-[11px] leading-relaxed">
+                  <li>打开 Suno.com，开启 **Custom (自定义模式)** 开关。</li>
+                  <li>将 **Style of Music** 粘贴到风格框中。</li>
+                  <li>将 **Lyrics with Metatags** 粘贴到歌词框中。</li>
+                  <li>将 **Title** 设为 《{newSongTitle || '我们终究是错过'}》。</li>
+                  <li>点击 **Create**，即可收获殿堂级华语金曲小样！</li>
+                </ol>
+              </div>
+
+              <textarea
+                readOnly
+                rows={8}
+                value={compileFullSunoSuite()}
+                className="w-full p-3 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-slate-300 leading-relaxed custom-scrollbar"
+              />
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(compileFullSunoSuite());
+                  setCopiedType('modalFull');
+                  setTimeout(() => setCopiedType(null), 2000);
+                }}
+                className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all flex items-center space-x-1.5 cursor-pointer"
+              >
+                {copiedType === 'modalFull' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                <span>{copiedType === 'modalFull' ? '已再次复制' : '再次复制全套'}</span>
+              </button>
+
+              <a
+                href="https://suno.com"
+                target="_blank"
+                rel="noreferrer"
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs shadow-lg shadow-amber-500/20 transition-all flex items-center space-x-1.5 cursor-pointer"
+              >
+                <span>直达 Suno.com 创作 ↗</span>
+              </a>
+            </div>
           </div>
         </div>
       )}

@@ -115,6 +115,27 @@ export interface SunoTuningParameters {
   antiDriftTips: string[]; // Anti-drift recommendations tailored to lyrics
 }
 
+export interface LyricLineStructure {
+  lineIndex: number;
+  text: string;
+  syllableCount: number;
+}
+
+export interface LyricSectionStructure {
+  sectionName: string;
+  tag: string;
+  lineCount: number;
+  summary?: string;
+  lines: LyricLineStructure[];
+}
+
+export interface LyricComparisonData {
+  totalSections: number;
+  totalLines: number;
+  formattedLyricsWithTags: string;
+  sections: LyricSectionStructure[];
+}
+
 export interface PresetSong {
   id: string;
   title: string;

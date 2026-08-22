@@ -4,13 +4,14 @@ import { PresetSelector } from './components/PresetSelector';
 import { SongAnalyzerForm } from './components/SongAnalyzerForm';
 import { SongAnalysisView } from './components/SongAnalysisView';
 import { ImitationStudio } from './components/ImitationStudio';
+import { MusicProducerPRDView } from './components/MusicProducerPRDView';
 import { AuthModal } from './components/AuthModal';
 import { PRESET_SONGS } from './data/presets';
 import { SongAnalysisResult, ImitationSongBlueprint, PresetSong, UserProfile } from './types';
 import { Disc, Sparkles, Wand2, Music2, AlertCircle } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'presets' | 'analyzer' | 'imitation'>('presets');
+  const [activeTab, setActiveTab] = useState<'presets' | 'analyzer' | 'imitation' | 'prd'>('presets');
   const [currentAnalysis, setCurrentAnalysis] = useState<SongAnalysisResult | null>(PRESET_SONGS[0].analysis);
   const [currentBlueprint, setCurrentBlueprint] = useState<ImitationSongBlueprint | null>(null);
 
@@ -233,6 +234,7 @@ export default function App() {
           <PresetSelector
             onSelectPreset={handleSelectPreset}
             onGoCustom={() => setActiveTab('analyzer')}
+            onGoPRD={() => setActiveTab('prd')}
           />
         )}
 
@@ -260,6 +262,13 @@ export default function App() {
             onGenerateBlueprint={handleGenerateImitationBlueprint}
             blueprint={currentBlueprint}
             isGenerating={isGeneratingBlueprint}
+          />
+        )}
+
+        {/* Tab 4: International Music Producer PRD & Specification Document */}
+        {activeTab === 'prd' && (
+          <MusicProducerPRDView
+            onGoToImitation={() => setActiveTab('imitation')}
           />
         )}
       </main>
